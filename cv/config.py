@@ -1,0 +1,2 @@
+CAMERA_INDEX = 0
+WINDOW_NAME = "Camera Feed"
