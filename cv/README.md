@@ -94,3 +94,49 @@ The HSV threshold values are initial estimates and may not perfectly match the o
 The next feature will use the red and green masks to find object contours, filter small noisy regions, and draw bounding boxes around detected pillars.
 
 
+## Feature 3: Red and Green Pillar Contour Detection
+
+### Purpose
+The purpose of this feature is to detect the location and size of red and green pillar-like objects in the camera image.
+
+This feature builds on the previous HSV masking. Instead of only showing red and green pixels, the system now finds connected colored regions and extracts useful information such as the bounding box, center point, and contour area.
+
+### Design Logic
+The HSV masks from the previous feature produce binary images, where the target color appears white and the rest of the image appears black. Contour detection is used to find connected white regions in these masks.
+
+Small detected regions are ignored using a minimum area threshold. This reduces false detections caused by noise, reflections, shadows, or small colored objects in the background. For each valid contour, a bounding rectangle is calculated. The center of this rectangle is also calculated because it will later help determine whether the pillar is on the left, center, or right side of the camera view.
+
+The detection result is stored as a list of dictionaries containing the color, bounding box coordinates, center point, and area. This makes the output easier to use later in the robot’s navigation logic. However, we might later create a general detections class, so that the detected pillars become objects of this class. That way, it becomes better for more complex pillar features.
+
+### Algorithm Steps
+After creating red and green binary masks using HSV thresholds:
+1. Find contours in the red mask.
+2. Find contours in the green mask.
+3. Calculate the area of each contour.
+4. Ignore contours smaller than the minimum area threshold.
+5. Calculate a bounding rectangle around each valid contour.
+6. Calculate the center point of each bounding rectangle.
+7. Store the detection information in a dictionary.
+8. Draw bounding boxes, center points, and labels on the camera frame for testing.
+
+### Files Added or Modified
+* `config.py`: Added the minimum pillar area and drawing settings.
+* `vision.py`: Added pillar detection using contours and a function for drawing detections.
+* `test_vision.py`: Updated the testing script to detect red and green objects and display bounding boxes.
+
+### Testing Method
+The feature was tested using a live camera feed. Red and green objects were placed in front of the camera and observed in both the mask windows and the main camera window. Correct detection occurs when the object appears white in the correct mask and a bounding box is drawn around it in the camera frame.
+
+The minimum area threshold can be tuned to remove noise. If small noise is detected as a pillar, the threshold can be increased. If valid pillars are missed, the threshold can be decreased.
+
+### Result
+The computer vision system can now detect red and green colored regions, filter out small noisy regions, and return structured information about each detected object. The system also displays bounding boxes and center points for visual debugging.
+
+### Limitations
+This feature still depends on the quality of the HSV masks. If the HSV thresholds are not tuned correctly, the contour detection may miss a pillar or detect background objects with similar colors. The system also does not yet classify whether the pillar is on the left, center, or right side of the image. It only returns the object center coordinates. Area threshold should be retuned under different lighting conditions.
+
+### Next Step
+The next feature will classify the detected pillar position in the camera frame, such as left, center, or right. This will help connect computer vision output to the robot’s navigation decisions.
+
+
+

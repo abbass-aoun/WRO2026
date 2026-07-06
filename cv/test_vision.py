@@ -2,7 +2,13 @@ import cv2 as cv
 
 from camera import open_camera, read_frame, release_camera
 from config import WINDOW_NAME, RED_MASK_WINDOW, GREEN_MASK_WINDOW
-from vision import convert_to_hsv, create_red_mask, create_green_mask
+from vision import (
+    convert_to_hsv,
+    create_red_mask, 
+    create_green_mask,
+    draw_detections,
+    detect_pillars
+)
 
 
 def main():
@@ -16,7 +22,14 @@ def main():
         red_mask = create_red_mask(hsv_frame)
         green_mask = create_green_mask(hsv_frame)
 
-        cv.imshow(WINDOW_NAME, frame)
+        red_detections = detect_pillars(red_mask, "red")
+        green_detections = detect_pillars(green_mask, "green")
+
+        all_detections = red_detections + green_detections
+
+        output_frame = draw_detections(frame, all_detections)
+
+        cv.imshow(WINDOW_NAME, output_frame)
         cv.imshow(RED_MASK_WINDOW, red_mask)
         cv.imshow(GREEN_MASK_WINDOW, green_mask)
 

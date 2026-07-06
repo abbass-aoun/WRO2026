@@ -23,3 +23,12 @@ UPPER_RED_2 = (179, 255, 255)
 # Green range
 LOWER_GREEN = (40, 70, 70)
 UPPER_GREEN = (85, 255, 255)
+
+
+# Minimum contour area
+# Smaller detected regions are ignored as noise
+MIN_PILLAR_AREA = 3500
+
+# Drawing settings 
+BOUNDING_BOX_THICKNESS = 2
+CENTER_DOT_RADIUS = 5
