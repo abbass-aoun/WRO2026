@@ -15,6 +15,8 @@ from config import(
     MAX_ASPECT_RATIO,
     MIN_EXTENT,
     MIN_CONFIDENCE,
+    LEFT_REGION_RATIO,
+    RIGHT_REGION_RATIO,
     BOUNDING_BOX_THICKNESS,
     CENTER_DOT_RADIUS
 )
@@ -105,6 +107,11 @@ def calculate_detection_confidence(area, width, height, aspect_ratio, extent):
     else:
         aspect_score = 0.0
     
+    # The confidence weights are manually chosen heuristic (not optimal) values.
+    # They are not trained probabilities.
+    # Area is weighted most because small blobs are often noise.
+    # Height and extent help confirm pillar-like shape.
+    # Aspect ratio is useful but given lower weight because perspective can distort it.
     confidence = (
         0.35 * area_score 
         + 0.25 * height_score 
@@ -152,7 +159,31 @@ def is_valid_pillar(area, width, height, aspect_ratio, extent, confidence):
     return True
 
 
-def detect_pillars(mask, color_name):
+def classify_horizontal_position(center_x, frame_width):
+    """
+    Classifies an object's horizontal position in the camera frame.
+
+    Args:
+        center_x: The abscissa of the object's center.
+        frame_width: The width of the camera frame
+
+    Returns:
+        position: "left", "center", or "right"
+    """
+
+    left_boundary = int(frame_width * LEFT_REGION_RATIO)
+    right_boundary = int(frame_width * RIGHT_REGION_RATIO)
+
+    if(center_x < left_boundary):
+        return "left"
+    
+    if(center_x > right_boundary):
+        return "right"
+    
+    return "center"
+
+
+def detect_pillars(mask, color_name, frame_width):
     """
     Detects pillar-like colored regions from a binary mask.
 
@@ -205,6 +236,8 @@ def detect_pillars(mask, color_name):
         center_x = x + width // 2
         center_y = y + height // 2
 
+        horizontal_position = classify_horizontal_position(center_x, frame_width)
+
         detection = {
             "color": color_name,
             "x": x,
@@ -213,6 +246,7 @@ def detect_pillars(mask, color_name):
             "height": height,
             "center_x": center_x,
             "center_y": center_y,
+            "horizontal_position": horizontal_position,
             "area": area,
             "aspect_ratio": aspect_ratio,
             "extent": extent,
@@ -245,11 +279,12 @@ def draw_detections(frame, detections):
         height = detection["height"]
         center_x = detection["center_x"]
         center_y = detection["center_y"]
+        horizontal_position = detection["horizontal_position"]
         color_name = detection["color"]
         # area = detection["area"]
         color_name = detection["color"]
         confidence = detection["confidence"]
-
+        
         if color_name == "red":
             box_color = (0, 0, 255)
         else:
@@ -271,7 +306,7 @@ def draw_detections(frame, detections):
             -1
         )
 
-        label = f"{color_name} conf = {confidence:.2f}"
+        label = f"{color_name} {horizontal_position} conf = {confidence:.2f}"
 
         cv.putText(
             output_frame,

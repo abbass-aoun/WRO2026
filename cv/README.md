@@ -149,7 +149,25 @@ The system now checks whether each detected contour has properties that are cons
 
 The height-to-width ratio is used because a pillar is expected to appear taller than it is wide in the camera image. The extent value compares the contour area to the bounding box area. A solid rectangular object should fill a reasonable portion of its bounding box, while noisy or broken shapes usually have lower extent.
 
-A rule-based confidence score is calculated for each detection. This score is based on area, height, extent, and aspect ratio. The confidence value is not produced by a machine learning model; it is a manually designed reliability score used to compare and filter detections.
+A rule-based confidence score is calculated for each detection. This score is based on area, height, extent, and aspect ratio.
+
+The confidence score is a manually designed rule-based score, not a machine learning probability. The weights were selected based on which properties are expected to best indicate a real WRO pillar. Contour area was given the highest weight because a real pillar should occupy a noticeable region in the image, while very small regions are often noise. Height and extent were also given significant weight because the official pillar is taller than it is wide and should appear as a relatively solid colored shape. Aspect ratio was included with a smaller weight because the real pillar has an expected height-to-width ratio of about 2.0, but camera angle and perspective can change the apparent ratio. These weights are initial values and should be tuned after testing with the final robot camera and official pillar objects.
+
+Before calculating the final confidence, each measurement is converted into a normalized score between 0 and 1:
+
+area_score = min(area / 3000, 1.0)
+height_score = min(height / 120, 1.0)
+extent_score = min(extent / 0.8, 1.0)
+
+The area_score compares the contour area to a target area of 3000 pixels. A larger colored region is more likely to be a real pillar, while very small regions are more likely to be noise. If the area reaches or exceeds 3000 pixels, the score is limited to 1.0.
+
+The height_score compares the bounding box height to a target height of 120 pixels. Since the official pillar is taller than it is wide, taller detections are considered more reliable than small blobs. If the height reaches or exceeds 120 pixels, the score is limited to 1.0.
+
+The extent_score compares the contour extent to a target value of 0.8. Extent is calculated as the contour area divided by the bounding box area. A solid rectangular pillar should fill a large portion of its bounding box, while broken, noisy, or irregular detections usually have lower extent. If the extent reaches or exceeds 0.8, the score is limited to 1.0.
+
+The min(..., 1.0) function is used to keep each score within the range of 0 to 1. This prevents one very large measurement from dominating the final confidence score.
+
+These target values are initial estimates selected for testing. They depend on the camera resolution, camera angle, distance from the pillar, lighting conditions, and the final Raspberry Pi camera setup. Therefore, they should be tuned a
 
 ### Algorithm Steps
 1. Calculate the contour area.
@@ -182,4 +200,8 @@ During testing, red false detections appeared on skin under certain lighting con
 
 ### Next Step
 The next feature will classify the accepted pillar position relative to the camera view, such as left, center, or right. This will make the detection output more useful for navigation decisions.
+
+
+
+
 

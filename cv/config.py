@@ -13,10 +13,12 @@ GREEN_MASK_WINDOW = "Green Mask"
 # These values are starting points and will need tuning using the real pillars
 
 # Red wraps around the HSV hue scale, so we need two red ranges:
-# one from 0 to 10 and one from 170 to 179.
+
+# one from 0 to 10.
 LOWER_RED_1 = (0, 140, 80)
 UPPER_RED_1 = (10, 255, 255)
 
+# one from 170 to 179.
 LOWER_RED_2 = (170, 140, 80)
 UPPER_RED_2 = (179, 255, 255)
 
@@ -48,6 +50,16 @@ MIN_EXTENT = 0.35
 # Minimum confidence required to accept a detection.
 MIN_CONFIDENCE = 0.45
 
+
 # Drawing settings 
 BOUNDING_BOX_THICKNESS = 2
 CENTER_DOT_RADIUS = 5
+
+
+# Camera-relative position thresholds.
+# If center_x is less than 33% of the frame width, the object is on the left.
+# If center_x is greater than 66% of the frame width, the object is on the right.
+# Otherwise, it is in the center.
+LEFT_REGION_RATIO = 0.33
+RIGHT_REGION_RATIO = 0.66
+

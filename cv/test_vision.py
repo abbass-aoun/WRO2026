@@ -22,8 +22,10 @@ def main():
         red_mask = create_red_mask(hsv_frame)
         green_mask = create_green_mask(hsv_frame)
 
-        red_detections = detect_pillars(red_mask, "red")
-        green_detections = detect_pillars(green_mask, "green")
+        frame_height, frame_width = frame.shape[:2]
+
+        red_detections = detect_pillars(red_mask, "red", frame_width)
+        green_detections = detect_pillars(green_mask, "green", frame_width)
 
         all_detections = red_detections + green_detections
 
