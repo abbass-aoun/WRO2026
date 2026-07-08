@@ -133,10 +133,53 @@ The minimum area threshold can be tuned to remove noise. If small noise is detec
 The computer vision system can now detect red and green colored regions, filter out small noisy regions, and return structured information about each detected object. The system also displays bounding boxes and center points for visual debugging.
 
 ### Limitations
-This feature still depends on the quality of the HSV masks. If the HSV thresholds are not tuned correctly, the contour detection may miss a pillar or detect background objects with similar colors. The system also does not yet classify whether the pillar is on the left, center, or right side of the image. It only returns the object center coordinates. Area threshold should be retuned under different lighting conditions.
+This feature still depends on the quality of the HSV masks. If the HSV thresholds are not tuned correctly, the contour detection may miss a pillar or detect background objects with similar colors. 
 
 ### Next Step
-The next feature will classify the detected pillar position in the camera frame, such as left, center, or right. This will help connect computer vision output to the robot’s navigation decisions.
+The next step is to add restraints and condition related to the object's shape, area, height, and width in order to rule out detections of noise and objects that are not pillars.
 
 
+## Feature 4: Object Filtering and Confidence Logic
+
+### Purpose
+The purpose of this feature is to improve the reliability of red and green pillar detection. The previous detection system could find colored regions using contours, but not every colored region is a real WRO pillar. This feature adds filtering rules and a confidence score to reduce false detections caused by noise, reflections, shadows, or unrelated colored objects.
+
+### Design Logic
+The system now checks whether each detected contour has properties that are consistent with a pillar-like object. A valid pillar should have enough area, a reasonable bounding box size, a suitable height-to-width ratio, and a contour that fills its bounding box well.
+
+The height-to-width ratio is used because a pillar is expected to appear taller than it is wide in the camera image. The extent value compares the contour area to the bounding box area. A solid rectangular object should fill a reasonable portion of its bounding box, while noisy or broken shapes usually have lower extent.
+
+A rule-based confidence score is calculated for each detection. This score is based on area, height, extent, and aspect ratio. The confidence value is not produced by a machine learning model; it is a manually designed reliability score used to compare and filter detections.
+
+### Algorithm Steps
+1. Calculate the contour area.
+2. Calculate the bounding rectangle around the contour.
+3. Calculate the bounding box width and height.
+4. Calculate the aspect ratio using height divided by width.
+5. Calculate the extent using contour area divided by bounding box area.
+6. Calculate a confidence score from area, height, extent, and aspect ratio.
+7. Reject detections that do not pass the minimum filtering thresholds.
+8. Store accepted detections with their color, bounding box, center point, area, aspect ratio, extent, and confidence.
+9. Draw bounding boxes and confidence labels on the camera frame for testing.
+
+### Files Added or Modified
+* `config.py`: Added filtering thresholds for minimum area, minimum width, minimum height, aspect ratio, extent, and confidence.
+* `vision.py`: Added confidence calculation and validation logic for pillar detections.
+* `test_vision.py`: No major structural change was required because it already calls the detection and drawing functions.
+
+### Testing Method
+The feature was tested using a live camera feed with red and green objects. The system was checked to confirm that large pillar-like objects were accepted while small noisy regions and non-pillar-like shapes were rejected. The confidence label displayed on the camera frame was used to compare stronger and weaker detections.
+
+Testing include similar pillar objects at different distances and under different lighting conditions. WHen correct pillars are rejected, the thresholds are relaxed. When false detections are accepted, the thresholds are made stricter.
+
+### Result
+The vision system can now filter colored contours more intelligently and assign a confidence score to each accepted detection. This improves the reliability of the computer vision pipeline before it is connected to navigation decisions.
+
+### Limitations
+The confidence score is rule-based and depends on manually selected thresholds. These thresholds may need to be changed when testing with the robot camera, official pillar colors, or different lighting conditions. The system still depends on the quality of the HSV masks, so poor threshold values can still cause missed or false detections.
+
+During testing, red false detections appeared on skin under certain lighting conditions. This happened because skin tones can partially overlap with the red HSV range, especially under warm lighting. To reduce this issue, the red saturation threshold was increased so that only stronger red regions are accepted (we changed the lower saturation bound from 100 to 140, and the lower decreased the lower bound of value from 100 to 80). The aspect ratio filter was also adjusted (MIN_ASPECT_RATIO 1.2 -> 1.4) using the official pillar dimensions of 50 mm × 50 mm × 100 mm, giving an expected height-to-width ratio of approximately 2.0.
+
+### Next Step
+The next feature will classify the accepted pillar position relative to the camera view, such as left, center, or right. This will make the detection output more useful for navigation decisions.
 
