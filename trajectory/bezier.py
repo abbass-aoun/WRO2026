@@ -221,12 +221,13 @@ class BezierSegment(TrajectoryBase):
         d1 = self._deriv1_at_t(t)
         d2 = self._deriv2_at_t(t)
         # 2D cross product: d1.x·d2.y − d1.y·d2.x
+        # Sign convention: positive = CCW (left) turn, negative = CW (right) turn.
         cross = float(d1[0]*d2[1] - d1[1]*d2[0])
         speed_sq = float(d1[0]**2 + d1[1]**2)
         speed_cubed = speed_sq ** 1.5
         if speed_cubed < 1e-9:
             return 0.0
-        return abs(cross) / speed_cubed
+        return cross / speed_cubed
 
     @property
     def total_length(self) -> float:

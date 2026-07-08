@@ -437,7 +437,7 @@ def compute_run(sections, start_theta, lot_x, lot_y):
     cx, cy, cth = 150.0, 50.0, float(start_theta)
 
     for sec_i, (path, label, _) in enumerate(sections):
-        xs, ys, ths, sts, sps = simulate_section(path, cx, cy, cth)
+        xs, ys, ths, sts, sps = simulate_section(path, cx, cy, cth, label)
         for row in zip(xs, ys, ths, sts, sps):
             frames.append((*row, sec_i, label))
         cx, cy, cth = xs[-1], ys[-1], ths[-1]
@@ -455,27 +455,36 @@ def compute_run(sections, start_theta, lot_x, lot_y):
 # Main
 # ─────────────────────────────────────────────────────────────────────────────
 
-def main():
-    # ── Pre-compute (this happens before the window opens — gives clean start)
-    print("WRO 2026 Pygame Simulation")
-    print("  Generating random pillars...")
+def _regenerate():
+    """Re-roll pillars + lot positions and re-simulate both runs."""
     ccw_p, cw_p = generate_pillars()
+    ccw_lot_x = float(np.random.uniform(115, 185))
+    cw_lot_x  = float(np.random.uniform(115, 185))
 
-    print("  Building CCW sections...")
     ccw_secs = build_ccw_sections(ccw_p)
-    print("  Building CW  sections...")
     cw_secs  = build_cw_sections(cw_p)
 
-    print("  Simulating CCW trajectory (bicycle model)...")
-    ccw_frames, ccw_park = compute_run(ccw_secs, 0.0, CCW_LOT_X, CCW_LOT_Y)
-    print("  Simulating CW  trajectory (bicycle model)...")
-    cw_frames,  cw_park  = compute_run(cw_secs, math.pi, CW_LOT_X, CW_LOT_Y)
+    ccw_frames, ccw_park = compute_run(ccw_secs, 0.0,      ccw_lot_x, CCW_LOT_Y)
+    cw_frames,  cw_park  = compute_run(cw_secs,  math.pi,  cw_lot_x,  CW_LOT_Y)
 
-    ccw_pills = list(ccw_p.values())   # 4 pillars: sec0,sec2,sec4,sec6
+    ccw_pills = list(ccw_p.values())
     cw_pills  = list(cw_p.values())
 
-    print(f"  CCW: {len(ccw_frames)} frames ({len(ccw_frames)*DT:.1f} s sim)")
-    print(f"  CW:  {len(cw_frames)}  frames ({len(cw_frames)*DT:.1f} s sim)")
+    print(f"  CCW: {len(ccw_frames)} frames ({len(ccw_frames)*DT:.1f} s)  "
+          f"lot_x={ccw_lot_x:.0f}")
+    print(f"  CW:  {len(cw_frames)}  frames ({len(cw_frames)*DT:.1f} s)  "
+          f"lot_x={cw_lot_x:.0f}")
+
+    return [
+        ('CCW', C_CCW, ccw_frames, ccw_secs, ccw_park, ccw_lot_x, CCW_LOT_Y, ccw_pills),
+        ('CW',  C_CW,  cw_frames,  cw_secs,  cw_park,  cw_lot_x,  CW_LOT_Y,  cw_pills),
+    ]
+
+
+def main():
+    # ── Pre-compute (before the window opens — gives clean start)
+    print("WRO 2026 Pygame Simulation")
+    print("  Generating random pillars + lot positions...")
     print("  Opening window...")
 
     # ── Pygame init
@@ -489,11 +498,8 @@ def main():
     font_sm  = pygame.font.SysFont("consolas", 12)
     fonts = (font_big, font_med, font_sm)
 
-    # ── Run registry
-    runs = [
-        ('CCW', C_CCW, ccw_frames, ccw_secs, ccw_park, CCW_LOT_X, CCW_LOT_Y, ccw_pills),
-        ('CW',  C_CW,  cw_frames,  cw_secs,  cw_park,  CW_LOT_X,  CW_LOT_Y,  cw_pills),
-    ]
+    # ── Run registry (built by _regenerate; refreshed on every R press)
+    runs = _regenerate()
 
     # ── Mutable state
     run_idx     = 0
@@ -533,6 +539,8 @@ def main():
                 if k == pygame.K_f:
                     fast = not fast
                 if k == pygame.K_r:
+                    print("  Regenerating pillars + lot positions...")
+                    runs[:] = _regenerate()
                     load_run(0); paused = False
 
         # Unpack current run

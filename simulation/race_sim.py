@@ -39,8 +39,11 @@ CL       = 50         # centerline near wall  (y=50 bottom, x=50 left)
 CH       = 250        # centerline far wall   (y=250 top,   x=250 right)
 
 # ── Car / simulation parameters ──────────────────────────────────────────────
-BASE_SPEED   = 40.0   # cm/s on straights          (TUNE ON REAL ROBOT)
-K_CURVE      = 30.0   # slow-down factor in curves  (TUNE ON REAL ROBOT)
+BASE_SPEED   = 40.0   # cm/s on straights              (TUNE ON REAL ROBOT)
+MIN_SPEED    = 8.0    # cm/s minimum (servo authority) (TUNE ON REAL ROBOT)
+A_LAT_MAX    = 12.5   # cm/s² lateral acceleration limit for speed-from-curvature
+                      # v_max = sqrt(A_LAT_MAX / |κ|)  — from WRO 2025 team formula
+                      # 12.5 cm/s² ≈ 0.013 g (very conservative; TUNE ON REAL ROBOT)
 DT           = 0.02   # 50 Hz control loop
 WHEELBASE    = 16.5   # cm front-to-rear axle       (TUNE ON REAL ROBOT)
 ROBOT_LENGTH = 18.0   # cm total car length         (TUNE ON REAL ROBOT)
@@ -50,9 +53,9 @@ ROBOT_LENGTH = 18.0   # cm total car length         (TUNE ON REAL ROBOT)
 #   Width = always 20 cm (gap between the two magenta marker blocks)
 #   Depth = 1.5 × robot length  (calculated per-team once robot is built)
 #   Lot is in the starting straight; car drives South (y decreasing) to enter.
-CCW_LOT_X  = 200.0               # centre-x of lot on the East straight
+CCW_LOT_X  = 150.0               # default centre-x; randomised in main()
 CCW_LOT_Y  = float(CL)           # entry edge on the centreline (y=50)
-CW_LOT_X   = 100.0               # centre-x of lot on the West straight
+CW_LOT_X   = 150.0               # default centre-x; randomised in main()
 CW_LOT_Y   = float(CL)
 LOT_THETA  = -math.pi / 2        # car heading to drive INTO the lot (South)
 LOT_WIDTH  = 20.0                 # cm — fixed by WRO 2026 rules
@@ -87,17 +90,17 @@ def generate_pillars():
     Random pillar positions — one pillar per straight section (4 per direction).
     Color is random RED or GREEN each run.
 
-    CCW straights:
-        sec 0  East   (y=CL):   x in [170,230]
-        sec 2  North  (x=CH):   y in [170,230]
-        sec 4  West   (y=CH):   x in [70,130]
-        sec 6  South  (x=CL):   y in [70,130]
+    CCW straights (each runs 100 cm: 100→200 or 200→100):
+        sec 0  East   (y=CL):   x in [120,180]
+        sec 2  North  (x=CH):   y in [120,180]
+        sec 4  West   (y=CH):   x in [120,180]
+        sec 6  South  (x=CL):   y in [120,180]
 
-    CW straights:
-        sec 0  West   (y=CL):   x in [70,130]
-        sec 2  North  (x=CL):   y in [170,230]
-        sec 4  East   (y=CH):   x in [170,230]
-        sec 6  South  (x=CH):   y in [70,130]
+    CW straights (mirror layout):
+        sec 0  West   (y=CL):   x in [120,180]
+        sec 2  North  (x=CL):   y in [120,180]
+        sec 4  East   (y=CH):   x in [120,180]
+        sec 6  South  (x=CH):   y in [120,180]
     """
     rng = np.random.default_rng()
 
@@ -105,16 +108,16 @@ def generate_pillars():
         return int(rng.integers(0, 2))
 
     ccw = {
-        'sec0': (float(rng.uniform(170, 230)), float(CL),  rc()),
-        'sec2': (float(CH),  float(rng.uniform(170, 230)), rc()),
-        'sec4': (float(rng.uniform(70,  130)), float(CH),  rc()),
-        'sec6': (float(CL),  float(rng.uniform(70,  130)), rc()),
+        'sec0': (float(rng.uniform(120, 180)), float(CL),  rc()),
+        'sec2': (float(CH),  float(rng.uniform(120, 180)), rc()),
+        'sec4': (float(rng.uniform(120, 180)), float(CH),  rc()),
+        'sec6': (float(CL),  float(rng.uniform(120, 180)), rc()),
     }
     cw = {
-        'sec0': (float(rng.uniform(70,  130)), float(CL),  rc()),
-        'sec2': (float(CL),  float(rng.uniform(170, 230)), rc()),
-        'sec4': (float(rng.uniform(170, 230)), float(CH),  rc()),
-        'sec6': (float(CH),  float(rng.uniform(70,  130)), rc()),
+        'sec0': (float(rng.uniform(120, 180)), float(CL),  rc()),
+        'sec2': (float(CL),  float(rng.uniform(120, 180)), rc()),
+        'sec4': (float(rng.uniform(120, 180)), float(CH),  rc()),
+        'sec6': (float(CH),  float(rng.uniform(120, 180)), rc()),
     }
     return ccw, cw
 
@@ -124,76 +127,81 @@ def generate_pillars():
 def build_ccw_sections_open():
     """
     8 sections for one CCW lap — OPEN CHALLENGE (no traffic signs).
-    Clean straights + Bezier corners only.
+
+    Corner geometry: each corner starts 50 cm before the outer wall and
+    exits on the adjacent centreline — circular-arc endpoints so the Bezier
+    stays inside the track instead of bulging toward the outer wall.
     """
     PI = math.pi
     return [
-        (TrajectoryBuilder.straight(150, CL, 250, CL),     'Sec0 East  straight',    []),
-        (TrajectoryBuilder.corner(250, CL,  0,    +1, 50), 'Sec1 Corner BR (E->N)',  []),
-        (TrajectoryBuilder.straight(CH, 150, CH, 250),     'Sec2 North straight',    []),
-        (TrajectoryBuilder.corner(CH,  250, PI/2, +1, 50), 'Sec3 Corner TR (N->W)',  []),
-        (TrajectoryBuilder.straight(150, CH, CL, CH),      'Sec4 West  straight',    []),
-        (TrajectoryBuilder.corner(CL,  CH,  PI,   +1, 50), 'Sec5 Corner TL (W->S)',  []),
-        (TrajectoryBuilder.straight(CL, 150, CL, CL),      'Sec6 South straight',    []),
-        (TrajectoryBuilder.corner(CL,  CL,  -PI/2,+1, 50), 'Sec7 Corner BL (S->E)', []),
+        (TrajectoryBuilder.straight(100, CL, 200, CL),      'Sec0 East  straight',    []),
+        (TrajectoryBuilder.corner(200, CL,  0,    +1, 50),  'Sec1 Corner BR (E->N)',  []),
+        (TrajectoryBuilder.straight(250, 100, 250, 200),    'Sec2 North straight',    []),
+        (TrajectoryBuilder.corner(250, 200, PI/2, +1, 50),  'Sec3 Corner TR (N->W)',  []),
+        (TrajectoryBuilder.straight(200, 250, 100, 250),    'Sec4 West  straight',    []),
+        (TrajectoryBuilder.corner(100, 250, PI,   +1, 50),  'Sec5 Corner TL (W->S)',  []),
+        (TrajectoryBuilder.straight(50, 200, 50, 100),      'Sec6 South straight',    []),
+        (TrajectoryBuilder.corner(50,  100, -PI/2,+1, 50),  'Sec7 Corner BL (S->E)', []),
     ]
 
 
 def build_cw_sections_open():
     """
     8 sections for one CW lap — OPEN CHALLENGE (no traffic signs).
-    Clean straights + Bezier corners only.
+
+    Same circular-arc corner geometry as the CCW version.
     """
     PI = math.pi
     return [
-        (TrajectoryBuilder.straight(150, CL, CL, CL),      'Sec0 West  straight',    []),
-        (TrajectoryBuilder.corner(CL,  CL,  PI,   -1, 50), 'Sec1 Corner BL (W->N)',  []),
-        (TrajectoryBuilder.straight(CL, 150, CL, CH),      'Sec2 North straight',    []),
-        (TrajectoryBuilder.corner(CL,  CH,  PI/2, -1, 50), 'Sec3 Corner TL (N->E)',  []),
-        (TrajectoryBuilder.straight(150, CH, CH, CH),      'Sec4 East  straight',    []),
-        (TrajectoryBuilder.corner(CH,  CH,  0,    -1, 50), 'Sec5 Corner TR (E->S)',  []),
-        (TrajectoryBuilder.straight(CH, 150, CH, CL),      'Sec6 South straight',    []),
-        (TrajectoryBuilder.corner(CH,  CL,  -PI/2,-1, 50), 'Sec7 Corner BR (S->W)', []),
+        (TrajectoryBuilder.straight(200, CL, 100, CL),      'Sec0 West  straight',    []),
+        (TrajectoryBuilder.corner(100, CL,  PI,   -1, 50),  'Sec1 Corner BL (W->N)',  []),
+        (TrajectoryBuilder.straight(50, 100, 50, 200),      'Sec2 North straight',    []),
+        (TrajectoryBuilder.corner(50,  200, PI/2, -1, 50),  'Sec3 Corner TL (N->E)',  []),
+        (TrajectoryBuilder.straight(100, 250, 200, 250),    'Sec4 East  straight',    []),
+        (TrajectoryBuilder.corner(200, 250, 0,    -1, 50),  'Sec5 Corner TR (E->S)',  []),
+        (TrajectoryBuilder.straight(250, 200, 250, 100),    'Sec6 South straight',    []),
+        (TrajectoryBuilder.corner(250, 100, -PI/2,-1, 50),  'Sec7 Corner BR (S->W)', []),
     ]
 
 
 def build_ccw_sections(p):
     """
     8 sections for one CCW lap — pillar swerve on every straight (4 pillars).
+    Swerve start/end aligned with the new circular-arc corner geometry.
     """
     PI = math.pi
-    p0 = p['sec0']   # East   straight  (y=CL)
-    p2 = p['sec2']   # North  straight  (x=CH)
-    p4 = p['sec4']   # West   straight  (y=CH)
-    p6 = p['sec6']   # South  straight  (x=CL)
+    p0 = p['sec0']   # East   straight  (y=CL,  x: 100→200)
+    p2 = p['sec2']   # North  straight  (x=CH,  y: 100→200)
+    p4 = p['sec4']   # West   straight  (y=CH,  x: 200→100)
+    p6 = p['sec6']   # South  straight  (x=CL,  y: 200→100)
 
     return [
         (TrajectoryBuilder.pillar_swerve(
-             150, CL, 0, p0[0], p0[1], p0[2], 250, CL, 0),
+             100, CL, 0, p0[0], p0[1], p0[2], 200, CL, 0),
          f'Sec0 East  +{_color_name(p0[2])}@({p0[0]:.0f},{p0[1]:.0f})', [p0]),
 
-        (TrajectoryBuilder.corner(250, CL, 0, +1, 50),
+        (TrajectoryBuilder.corner(200, CL, 0, +1, 50),
          'Sec1 Corner BR (E->N)', []),
 
         (TrajectoryBuilder.pillar_swerve(
-             CH, 150, PI/2, p2[0], p2[1], p2[2], CH, 250, PI/2),
+             250, 100, PI/2, p2[0], p2[1], p2[2], 250, 200, PI/2),
          f'Sec2 North +{_color_name(p2[2])}@({p2[0]:.0f},{p2[1]:.0f})', [p2]),
 
-        (TrajectoryBuilder.corner(CH, 250, PI/2, +1, 50),
+        (TrajectoryBuilder.corner(250, 200, PI/2, +1, 50),
          'Sec3 Corner TR (N->W)', []),
 
         (TrajectoryBuilder.pillar_swerve(
-             150, CH, PI, p4[0], p4[1], p4[2], CL, CH, PI),
+             200, 250, PI, p4[0], p4[1], p4[2], 100, 250, PI),
          f'Sec4 West  +{_color_name(p4[2])}@({p4[0]:.0f},{p4[1]:.0f})', [p4]),
 
-        (TrajectoryBuilder.corner(CL, CH, PI, +1, 50),
+        (TrajectoryBuilder.corner(100, 250, PI, +1, 50),
          'Sec5 Corner TL (W->S)', []),
 
         (TrajectoryBuilder.pillar_swerve(
-             CL, 150, -PI/2, p6[0], p6[1], p6[2], CL, CL, -PI/2),
+             50, 200, -PI/2, p6[0], p6[1], p6[2], 50, 100, -PI/2),
          f'Sec6 South +{_color_name(p6[2])}@({p6[0]:.0f},{p6[1]:.0f})', [p6]),
 
-        (TrajectoryBuilder.corner(CL, CL, -PI/2, +1, 50),
+        (TrajectoryBuilder.corner(50, 100, -PI/2, +1, 50),
          'Sec7 Corner BL (S->E)', []),
     ]
 
@@ -201,40 +209,41 @@ def build_ccw_sections(p):
 def build_cw_sections(p):
     """
     8 sections for one CW lap — pillar swerve on every straight (4 pillars).
+    Swerve start/end aligned with the new circular-arc corner geometry.
     """
     PI = math.pi
-    p0 = p['sec0']   # West   straight  (y=CL)
-    p2 = p['sec2']   # North  straight  (x=CL)
-    p4 = p['sec4']   # East   straight  (y=CH)
-    p6 = p['sec6']   # South  straight  (x=CH)
+    p0 = p['sec0']   # West   straight  (y=CL,  x: 200→100)
+    p2 = p['sec2']   # North  straight  (x=CL,  y: 100→200)
+    p4 = p['sec4']   # East   straight  (y=CH,  x: 100→200)
+    p6 = p['sec6']   # South  straight  (x=CH,  y: 200→100)
 
     return [
         (TrajectoryBuilder.pillar_swerve(
-             150, CL, PI, p0[0], p0[1], p0[2], CL, CL, PI),
+             200, CL, PI, p0[0], p0[1], p0[2], 100, CL, PI),
          f'Sec0 West  +{_color_name(p0[2])}@({p0[0]:.0f},{p0[1]:.0f})', [p0]),
 
-        (TrajectoryBuilder.corner(CL, CL, PI, -1, 50),
+        (TrajectoryBuilder.corner(100, CL, PI, -1, 50),
          'Sec1 Corner BL (W->N)', []),
 
         (TrajectoryBuilder.pillar_swerve(
-             CL, 150, PI/2, p2[0], p2[1], p2[2], CL, CH, PI/2),
+             50, 100, PI/2, p2[0], p2[1], p2[2], 50, 200, PI/2),
          f'Sec2 North +{_color_name(p2[2])}@({p2[0]:.0f},{p2[1]:.0f})', [p2]),
 
-        (TrajectoryBuilder.corner(CL, CH, PI/2, -1, 50),
+        (TrajectoryBuilder.corner(50, 200, PI/2, -1, 50),
          'Sec3 Corner TL (N->E)', []),
 
         (TrajectoryBuilder.pillar_swerve(
-             150, CH, 0, p4[0], p4[1], p4[2], CH, CH, 0),
+             100, 250, 0, p4[0], p4[1], p4[2], 200, 250, 0),
          f'Sec4 East  +{_color_name(p4[2])}@({p4[0]:.0f},{p4[1]:.0f})', [p4]),
 
-        (TrajectoryBuilder.corner(CH, CH, 0, -1, 50),
+        (TrajectoryBuilder.corner(200, 250, 0, -1, 50),
          'Sec5 Corner TR (E->S)', []),
 
         (TrajectoryBuilder.pillar_swerve(
-             CH, 150, -PI/2, p6[0], p6[1], p6[2], CH, CL, -PI/2),
+             250, 200, -PI/2, p6[0], p6[1], p6[2], 250, 100, -PI/2),
          f'Sec6 South +{_color_name(p6[2])}@({p6[0]:.0f},{p6[1]:.0f})', [p6]),
 
-        (TrajectoryBuilder.corner(CH, CL, -PI/2, -1, 50),
+        (TrajectoryBuilder.corner(250, 100, -PI/2, -1, 50),
          'Sec7 Corner BR (S->W)', []),
     ]
 
@@ -283,18 +292,46 @@ def simulate_section(path, start_x, start_y, start_theta, label=''):
         if s >= path.total_length:
             break
 
-        # Current curvature → target speed
+        # Physics-based speed from WRO 2025 team approach:
+        #   lateral acceleration  a_y = v² · |κ|  ≤  A_LAT_MAX
+        #   → v_max = sqrt(A_LAT_MAX / |κ|)
         curvature = path.get_curvature(s)
-        speed     = max(8.0, BASE_SPEED / (1.0 + K_CURVE * abs(curvature)))
+        if abs(curvature) > 1e-4:
+            speed = min(BASE_SPEED, math.sqrt(A_LAT_MAX / abs(curvature)))
+        else:
+            speed = BASE_SPEED
+        speed = max(MIN_SPEED, speed)
 
-        # PID: reads actual car pose, returns steering in degrees
-        steer_deg = ctrl.compute(x, y, theta, path, s)
+        # Ackermann feedforward: only on CORNER sections.
+        # Swerve bypass paths spike to very high curvature near the bypass waypoint —
+        # applying feedforward there saturates the servo and sends the car off track.
+        # Straights have κ≈0 so feedforward = 0 anyway.
+        # Sign: positive steer_deg = theta decreases; CCW κ>0 → steer_ff<0 (steer left).
+        #
+        # CRITICAL: clamp |κ| to 1/CORNER_RADIUS before computing feedforward.
+        # The Bezier endpoints have κ≈0.032 (60% above design 0.02) due to the
+        # cubic approximation.  Without clamping, the servo saturates to 27° and
+        # the car overshoots the 90° turn, causing a spiral in CW direction.
+        # Clamped at exactly 1/50 = 0.02, feedforward turns the car precisely 90°
+        # in the expected number of steps with no overshoot.
+        if 'Corner' in label:
+            kappa_ff = max(-0.02, min(0.02, curvature))  # clamp to corner design radius
+            steer_ff = -math.degrees(math.atan(WHEELBASE * kappa_ff))
+        else:
+            steer_ff = 0.0
+
+        # PID: reads actual car pose, returns CORRECTION in degrees
+        steer_corr = ctrl.compute(x, y, theta, path, s)
         # Advance arc-length pointer one step ahead of the closest-found point
         s = min(ctrl.current_s + speed * DT, path.total_length)
 
-        # ── Bicycle kinematics ──────────────────────────────────────────
-        # Sign: PID positive output = servo turns RIGHT = theta decreases.
-        # (PID convention: positive steer → correct car that is to the LEFT)
+        # Total steering = feedforward (handles the turn geometry) +
+        #                  PID correction (handles residual CTE/heading error)
+        steer_deg = max(-27.0, min(27.0, steer_ff + steer_corr))
+
+        # ── Bicycle kinematics (identical to WRO 2025 EKF motion model) ──
+        # x' = v·cos(θ)·dt   y' = v·sin(θ)·dt   θ' = –(v/L)·tan(δ)·dt
+        # Minus sign: positive δ = right turn → θ decreases.
         steer_rad  = math.radians(steer_deg)
         x     += speed * math.cos(theta) * DT + np.random.normal(0, 0.04)
         y     += speed * math.sin(theta) * DT + np.random.normal(0, 0.04)
@@ -507,9 +544,11 @@ def main():
     rev_secs  = build_cw_sections(cw_p)  if start_ccw else build_ccw_sections(ccw_p)
     rev_th    = PI if start_ccw else 0.0
 
-    lot_x     = CCW_LOT_X if start_ccw else CW_LOT_X
+    # Random lot position on the bottom straight (y=CL) — WRO places it randomly.
+    # Valid range: clear of corner entries at x=100 and x=200, so [115, 185].
+    lot_x     = float(np.random.uniform(115, 185))
     lot_y     = float(CL)
-    rev_lot_x = CW_LOT_X  if start_ccw else CCW_LOT_X
+    rev_lot_x = float(np.random.uniform(115, 185))   # fresh random if direction reverses
 
     # =========================================================================
     # OPEN CHALLENGE  --  3 clean laps, no traffic signs

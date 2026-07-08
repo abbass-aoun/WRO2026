@@ -108,7 +108,11 @@ class TrajectoryBuilder:
                           turn_direction * v0[0]])
 
         P0 = np.array([start_x, start_y])
-        P3 = P0 + radius * perp + radius * v3
+        # Circular-arc endpoint: P3 = P0 + R*v0 + R*perp.
+        # This puts P3 diagonally (45° between heading and turn direction),
+        # keeping Bezier control point P1 inside the track rather than
+        # pushing it toward the outer wall.
+        P3 = P0 + radius * v0 + radius * perp
 
         return BezierSegment.from_endpoints_and_tangents(P0, P3, v0, v3)
 
