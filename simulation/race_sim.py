@@ -31,51 +31,50 @@ from matplotlib.gridspec import GridSpec
 from trajectory.builder import TrajectoryBuilder, RED, GREEN
 from control.steering_controller import SteeringPIDController
 
-# ── Track geometry (cm) ──────────────────────────────────────────────────────
-OUTER    = 300        # mat is 300 x 300 cm
-INNER_LO = 100        # inner obstacle starts at x/y = 100
-INNER_HI = 200        # inner obstacle ends  at x/y = 200
-CL       = 50         # centerline near wall  (y=50 bottom, x=50 left)
-CH       = 250        # centerline far wall   (y=250 top,   x=250 right)
+# ── All tunable constants live in config.py — edit there, not here ───────────
+from config import (
+    TRACK_CM        as OUTER,
+    INNER_LO_CM     as INNER_LO,
+    INNER_HI_CM     as INNER_HI,
+    CL_CM           as CL,
+    CH_CM           as CH,
+    BASE_SPEED_CM_S as BASE_SPEED,
+    MIN_SPEED_CM_S  as MIN_SPEED,
+    A_LAT_MAX,
+    DT_S            as DT,
+    WHEELBASE_CM    as WHEELBASE,
+    ROBOT_LENGTH_CM as ROBOT_LENGTH,
+    CORNER_RADIUS_CM,
+    LOT_WIDTH_CM    as LOT_WIDTH,
+    LOT_DEPTH_CM    as LOT_DEPTH,
+    LOT_THETA_RAD   as LOT_THETA,
+    MARKER_W_CM     as MARKER_W,
+    MARKER_L_CM     as MARKER_L,
+    PID_KP, PID_KI, PID_KD, PID_HEADING_W, PID_WINDUP_LIM,
+    SERVO_MAX_DEG,
+    SIM_NOISE_XY_CM, SIM_NOISE_THETA_RAD,
+    SIM_PILLAR_MISS_CM, SIM_PILLAR_HIT_CM,
+    SIM_STAT_RUNS,
+)
 
-# ── Car / simulation parameters ──────────────────────────────────────────────
-BASE_SPEED   = 40.0   # cm/s on straights              (TUNE ON REAL ROBOT)
-MIN_SPEED    = 8.0    # cm/s minimum (servo authority) (TUNE ON REAL ROBOT)
-A_LAT_MAX    = 12.5   # cm/s² lateral acceleration limit for speed-from-curvature
-                      # v_max = sqrt(A_LAT_MAX / |κ|)  — from WRO 2025 team formula
-                      # 12.5 cm/s² ≈ 0.013 g (very conservative; TUNE ON REAL ROBOT)
-DT           = 0.02   # 50 Hz control loop
-WHEELBASE    = 16.5   # cm front-to-rear axle       (TUNE ON REAL ROBOT)
-ROBOT_LENGTH = 18.0   # cm total car length         (TUNE ON REAL ROBOT)
-
-# ── Parking lots ──────────────────────────────────────────────────────────────
-# WRO 2026 rules:
-#   Width = always 20 cm (gap between the two magenta marker blocks)
-#   Depth = 1.5 × robot length  (calculated per-team once robot is built)
-#   Lot is in the starting straight; car drives South (y decreasing) to enter.
-CCW_LOT_X  = 150.0               # default centre-x; randomised in main()
-CCW_LOT_Y  = float(CL)           # entry edge on the centreline (y=50)
-CW_LOT_X   = 150.0               # default centre-x; randomised in main()
+# Parking lot entry positions — both directions use y = CL (south straight)
+CCW_LOT_X  = 150.0        # default centre-x; randomised in obstacle challenge
+CCW_LOT_Y  = float(CL)
+CW_LOT_X   = 150.0
 CW_LOT_Y   = float(CL)
-LOT_THETA  = -math.pi / 2        # car heading to drive INTO the lot (South)
-LOT_WIDTH  = 20.0                 # cm — fixed by WRO 2026 rules
-LOT_DEPTH  = 1.5 * ROBOT_LENGTH  # = 27.0 cm
-MARKER_W   = 2.0                  # cm — magenta block thickness (2 cm wide)
-MARKER_L   = 20.0                 # cm — magenta block length   (20 cm long)
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 def _make_ctrl():
-    # heading_weight reduced from 18→8: prevents servo saturation at corner entry.
-    # heading_weight=18 caused the car to slam to ±27° immediately on every corner,
-    # overshooting the planned Bezier and accumulating drift each lap.
-    # Kd=0: derivative of noisy sensor readings saturates output. (TUNE ON REAL ROBOT)
+    # Gains from config.py — change PID_KP, PID_KI, PID_KD, PID_HEADING_W there.
+    # heading_weight=8 prevents servo saturation at corner entry (was 18, caused spirals).
+    # Kd=0: derivative of noisy sensor readings saturates output.
     return SteeringPIDController(
-        Kp=1.1, Ki=0.0, Kd=0.0,
-        output_limits=(-27, 27),
-        windup_limit=20.0,
-        heading_weight=8.0,
+        Kp=PID_KP, Ki=PID_KI, Kd=PID_KD,
+        output_limits=(-SERVO_MAX_DEG, SERVO_MAX_DEG),
+        windup_limit=PID_WINDUP_LIM,
+        heading_weight=PID_HEADING_W,
     )
 
 
@@ -333,10 +332,10 @@ def simulate_section(path, start_x, start_y, start_theta, label=''):
         # x' = v·cos(θ)·dt   y' = v·sin(θ)·dt   θ' = –(v/L)·tan(δ)·dt
         # Minus sign: positive δ = right turn → θ decreases.
         steer_rad  = math.radians(steer_deg)
-        x     += speed * math.cos(theta) * DT + np.random.normal(0, 0.04)
-        y     += speed * math.sin(theta) * DT + np.random.normal(0, 0.04)
+        x     += speed * math.cos(theta) * DT + np.random.normal(0, SIM_NOISE_XY_CM)
+        y     += speed * math.sin(theta) * DT + np.random.normal(0, SIM_NOISE_XY_CM)
         theta -= (speed / WHEELBASE) * math.tan(steer_rad) * DT
-        theta += np.random.normal(0, 0.0004)
+        theta += np.random.normal(0, SIM_NOISE_THETA_RAD)
         theta  = math.atan2(math.sin(theta), math.cos(theta))  # wrap ±π
         # ────────────────────────────────────────────────────────────────
 
@@ -661,10 +660,9 @@ def main():
         print(f"  Lap {i+1}: {lt:.1f} s")
 
     # ── Pillar proximity check ────────────────────────────────────────────
-    # Nominal swerve bypass is PILLAR_CLEARANCE_CM = 20 cm from pillar centre.
-    # Traffic sign body: 5x5 cm → effective collision radius ~5 cm.
-    MISS_CM      = 40.0   # flag if car never gets within 40 cm (bypassed wrong lane or far-overshot)
-    COLLISION_CM =  5.0   # flag if car comes within 5 cm (sign body overlap risk)
+    # Thresholds from config.py (SIM_PILLAR_MISS_CM / SIM_PILLAR_HIT_CM).
+    MISS_CM      = SIM_PILLAR_MISS_CM   # flag: too far  — wrong lane or missed
+    COLLISION_CM = SIM_PILLAR_HIT_CM    # flag: too close — sign body overlap
     missed_pillars = []
     print("\n--- Pillar proximity check (obstacle challenge) ---")
     for lap_i, (lap_xs, lap_ys, lap_spans, lap_secs) in enumerate(

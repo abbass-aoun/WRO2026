@@ -33,30 +33,19 @@ import numpy as np
 from estimation.ekf import EKF
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Physical constants  —  TUNE ON REAL ROBOT
+# All parameters come from config.py — edit there, not here.
 # ─────────────────────────────────────────────────────────────────────────────
-WHEELBASE_CM = 16.5     # front-to-rear axle distance in cm  # TUNE ON REAL ROBOT
+from config import (
+    WHEELBASE_CM,
+    EKF_Q_XY_CM2, EKF_Q_THETA_R2,
+    EKF_R_IMU_R2, EKF_R_GYRO_R2,
+    EKF_IMU_PERIOD,
+)
 
-# ─────────────────────────────────────────────────────────────────────────────
-# EKF noise parameters  —  TUNE ON REAL ROBOT
-# Start with large values (cautious); reduce after driving tests show tight results.
-# ─────────────────────────────────────────────────────────────────────────────
-Q = np.diag([
-    0.10,     # x process noise per step (cm^2)                # TUNE ON REAL ROBOT
-    0.10,     # y process noise per step (cm^2)                # TUNE ON REAL ROBOT
-    0.0002,   # theta process noise per step (rad^2, ~0.8 deg) # TUNE ON REAL ROBOT
-])
-
-# BNO055 absolute heading accuracy ~1 deg -> var = (pi/180)^2 ≈ 3e-4 rad^2
-R_IMU_HEADING = (math.pi / 180.0) ** 2   # rad^2  # TUNE ON REAL ROBOT
-
-# Gyro rate noise: MEMS gyro short-term drift ~0.003 rad/step
-R_GYRO = (0.003) ** 2                    # rad^2 per step  # TUNE ON REAL ROBOT
-
-# How often to apply the absolute IMU heading correction (ticks)
-# Gyro runs every tick (50 Hz); IMU absolute heading runs less often
-# to avoid over-correcting when the magnetometer is noisy near the motors.
-IMU_UPDATE_PERIOD = 5    # every 5th tick = 10 Hz  # TUNE ON REAL ROBOT
+Q                = np.diag([EKF_Q_XY_CM2, EKF_Q_XY_CM2, EKF_Q_THETA_R2])
+R_IMU_HEADING    = EKF_R_IMU_R2
+R_GYRO           = EKF_R_GYRO_R2
+IMU_UPDATE_PERIOD = EKF_IMU_PERIOD
 
 
 class EKFRunner:

@@ -22,15 +22,11 @@ import math
 import numpy as np
 from trajectory.bezier import BezierSegment, BezierPath
 from trajectory.waypoint_path import WaypointPath
+from config import PILLAR_CLEARANCE_CM   # edit in config.py to retune bypass distance
 
 # Pillar color constants — must match whatever the vision team sends
 RED   = 0
 GREEN = 1
-
-# How far to the side the bypass waypoint is placed from the pillar centre (cm).
-# Must be > pillar radius (2.5 cm) + half car width + safety margin.
-# TUNE ON REAL ROBOT once you know the car's exact width.
-PILLAR_CLEARANCE_CM = 20.0
 
 
 class TrajectoryBuilder:

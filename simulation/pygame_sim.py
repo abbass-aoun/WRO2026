@@ -33,10 +33,20 @@ from simulation.race_sim import (
     build_ccw_sections, build_cw_sections,
     simulate_section,
     CCW_LOT_Y,
-    LOT_THETA, LOT_WIDTH, LOT_DEPTH, MARKER_W, MARKER_L,
-    BASE_SPEED, DT, WHEELBASE, ROBOT_LENGTH,
 )
 from trajectory.builder import TrajectoryBuilder, RED, GREEN
+from config import (
+    BASE_SPEED_CM_S as BASE_SPEED,
+    DT_S            as DT,
+    WHEELBASE_CM    as WHEELBASE,
+    ROBOT_LENGTH_CM as ROBOT_LENGTH,
+    LOT_THETA_RAD   as LOT_THETA,
+    LOT_WIDTH_CM    as LOT_WIDTH,
+    LOT_DEPTH_CM    as LOT_DEPTH,
+    MARKER_W_CM     as MARKER_W,
+    MARKER_L_CM     as MARKER_L,
+    SIM_PILLAR_HIT_CM as PILLAR_HIT_CM,
+)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Layout
@@ -279,10 +289,11 @@ def draw_trail(surf, trail, color):
 
 def draw_panel(surf, fonts, run, sec_label, speed, steer,
                elapsed, frame_i, total_frames, parked):
-    direction     = run['dir']
-    car_col       = run['color']
-    lap3_reversed = run['lap3_reversed']
-    last_sign     = run['last_sign']
+    direction      = run['dir']
+    car_col        = run['color']
+    lap3_reversed  = run['lap3_reversed']
+    last_sign      = run['last_sign']
+    lap_end_frames = run.get('lap_end_frames', [])
 
     font_big, font_med, font_sm = fonts
     pygame.draw.rect(surf, PAN_BG, (PAN_X, T_TOP, PAN_W, TH))
@@ -371,6 +382,16 @@ def draw_panel(surf, fonts, run, sec_label, speed, steer,
     pct = int(100 * frame_i // max(total_frames,1))
     text(f"  {pct}%   ({elapsed:.1f} s)", font_sm); gap(10)
 
+    # Lap split timers
+    text("LAP SPLITS", font_sm, TXT_D); gap(3)
+    for lap_i, end_f in enumerate(lap_end_frames):
+        lap_t   = end_f * DT
+        done    = frame_i >= end_f
+        col_lap = GOLD_C if done else TXT_D
+        marker  = ">" if (not done and (lap_i == 0 or frame_i >= lap_end_frames[lap_i-1])) else " "
+        text(f"  {marker}Lap {lap_i+1}: {lap_t:.1f} s", font_sm, col_lap)
+    gap(8)
+
     # Special-rule result
     text("LAP 3 RULE", font_sm, TXT_D); gap(3)
     if last_sign == RED:
@@ -429,11 +450,14 @@ def compute_run(ccw_secs, cw_secs, start_is_ccw, lot_x):
     direction = 'CCW' if start_is_ccw else 'CW'
     car_col   = C_CCW  if start_is_ccw else C_CW
 
-    cx, cy, cth = 150.0, LOT_Y, start_th
-    last_sign     = None
-    lap3_reversed = False
-    lap3_secs     = obs_secs
-    frames        = []
+    cx, cy, cth    = 150.0, LOT_Y, start_th
+    last_sign      = None
+    lap3_reversed  = False
+    lap3_secs      = obs_secs
+    frames         = []
+    frame_count    = 0
+    lap_end_frames = []   # frame index at end of each lap  (for split timer)
+    pillar_results = []   # (end_frame, px, py, min_d) per swerve (for badges)
 
     for lap in range(3):
         if lap < 2:
@@ -459,9 +483,16 @@ def compute_run(ccw_secs, cw_secs, start_is_ccw, lot_x):
                     float(end_xy[0]), float(end_xy[1]), end_th
                 )
             xs, ys, ths, sts, sps, _ = simulate_section(path, cx, cy, cth, label)
+            if pillars:
+                seg_d = np.hypot(np.array(xs) - px, np.array(ys) - py)
+                pillar_results.append((frame_count + len(xs), px, py,
+                                       float(seg_d.min()), pc))
             for row in zip(xs, ys, ths, sts, sps):
                 frames.append((*row, lap * 10 + sec_i, f'L{lap+1} {label}'))
+            frame_count += len(xs)
             cx, cy, cth = xs[-1], ys[-1], ths[-1]
+
+        lap_end_frames.append(frame_count)
 
         # Track last sign only across lap 1 and lap 2
         if lap < 2:
@@ -477,7 +508,7 @@ def compute_run(ccw_secs, cw_secs, start_is_ccw, lot_x):
         frames.append((*row, 30, 'Parking approach'))
     cx, cy, cth = xs[-1], ys[-1], LOT_THETA
 
-    stop_dist     = LOT_DEPTH - ROBOT_LENGTH / 2   # = 18.0 cm
+    stop_dist     = LOT_DEPTH - ROBOT_LENGTH / 2
     drive_in_path = TrajectoryBuilder.straight(
         final_lot_x, LOT_Y,
         final_lot_x, LOT_Y - stop_dist)
@@ -486,17 +517,19 @@ def compute_run(ccw_secs, cw_secs, start_is_ccw, lot_x):
         frames.append((*row, 31, 'Parking drive-in'))
 
     return {
-        'dir':           direction,
-        'color':         car_col,
-        'frames':        frames,
-        'obs_secs':      obs_secs,
-        'lap3_secs':     lap3_secs,
-        'lap3_reversed': lap3_reversed,
-        'last_sign':     last_sign,
-        'park_path':     park_path,
-        'drive_in_path': drive_in_path,
-        'final_lot_x':   final_lot_x,
-        'pills':         [],        # filled by _regenerate
+        'dir':            direction,
+        'color':          car_col,
+        'frames':         frames,
+        'obs_secs':       obs_secs,
+        'lap3_secs':      lap3_secs,
+        'lap3_reversed':  lap3_reversed,
+        'last_sign':      last_sign,
+        'park_path':      park_path,
+        'drive_in_path':  drive_in_path,
+        'final_lot_x':    final_lot_x,
+        'pills':          [],           # filled by _regenerate
+        'lap_end_frames': lap_end_frames,
+        'pillar_results': pillar_results,
     }
 
 
@@ -634,6 +667,19 @@ def main():
             draw_full_path(screen, full_trail, car_col)
             draw_trail(screen, trail, car_col)
             draw_car(screen, x, y, theta, car_col)
+
+            # Pillar pass badges — shown once the car has passed each swerve
+            for end_f, px, py, min_d, pc in run.get('pillar_results', []):
+                if frame_idx >= end_f:
+                    hit  = min_d < PILLAR_HIT_CM
+                    bcol = RED_C if hit else GRN_C
+                    bx, by = w2s(px, py)
+                    pygame.draw.circle(screen, bcol, (bx, by - int(9*SCALE)), int(5*SCALE))
+                    badge = font_sm.render(
+                        f"!!{min_d:.0f}" if hit else f"{min_d:.0f}",
+                        True, bcol)
+                    screen.blit(badge, (bx - badge.get_width()//2,
+                                        by - int(9*SCALE) - badge.get_height()))
 
             if parked:
                 cx_s, cy_s = w2s(x, y)
