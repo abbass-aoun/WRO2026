@@ -439,14 +439,14 @@ def compute_run(sections, start_theta, lot_x, lot_y):
     cx, cy, cth = 150.0, 50.0, float(start_theta)
 
     for sec_i, (path, label, _) in enumerate(sections):
-        xs, ys, ths, sts, sps = simulate_section(path, cx, cy, cth, label)
+        xs, ys, ths, sts, sps, _ = simulate_section(path, cx, cy, cth, label)
         for row in zip(xs, ys, ths, sts, sps):
             frames.append((*row, sec_i, label))
         cx, cy, cth = xs[-1], ys[-1], ths[-1]
 
     park_path = TrajectoryBuilder.parking_approach(
         cx, cy, cth, lot_x, lot_y, LOT_THETA)
-    xs, ys, ths, sts, sps = simulate_section(park_path, cx, cy, cth)
+    xs, ys, ths, sts, sps, _ = simulate_section(park_path, cx, cy, cth)
     for row in zip(xs, ys, ths, sts, sps):
         frames.append((*row, 8, "Parking approach"))
     cx, cy, cth = xs[-1], ys[-1], LOT_THETA
@@ -456,7 +456,7 @@ def compute_run(sections, start_theta, lot_x, lot_y):
     drive_in_path = TrajectoryBuilder.straight(
         lot_x, lot_y,
         lot_x, lot_y - stop_dist)
-    xs, ys, ths, sts, sps = simulate_section(drive_in_path, cx, cy, cth)
+    xs, ys, ths, sts, sps, _ = simulate_section(drive_in_path, cx, cy, cth)
     for row in zip(xs, ys, ths, sts, sps):
         frames.append((*row, 9, "Parking drive-in"))
 

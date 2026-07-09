@@ -62,6 +62,7 @@ class SteeringPIDController(PIDController):
         super().__init__(Kp, Ki, Kd, output_limits, windup_limit)
         self.heading_weight: float = heading_weight
         self.current_s: float = 0.0  # updated every compute(); read by main loop
+        self.last_cte: float = 0.0   # raw cross-track error from last compute(); read by logger
 
     def compute_error(
         self,
@@ -98,6 +99,7 @@ class SteeringPIDController(PIDController):
         # CTE = dot((ex, ey), (-ty, tx)).
         # Positive = car is to the left of the path.
         cte = (-ty) * ex + tx * ey
+        self.last_cte = cte
 
         # Step 3 — heading error (difference between car and path direction).
         path_angle = math.atan2(ty, tx)

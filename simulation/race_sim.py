@@ -281,7 +281,7 @@ def simulate_section(path, start_x, start_y, start_theta, label=''):
 
     x, y, theta = start_x, start_y, start_theta
     xs     = [x];     ys    = [y];     thetas = [theta]
-    steers = [0.0];   speeds = [BASE_SPEED]
+    steers = [0.0];   speeds = [BASE_SPEED];  ctes = [0.0]
 
     max_steps = int(path.total_length / (BASE_SPEED * DT) * 5 + 50)
 
@@ -342,23 +342,34 @@ def simulate_section(path, start_x, start_y, start_theta, label=''):
 
         xs.append(x);  ys.append(y);  thetas.append(theta)
         steers.append(steer_deg);     speeds.append(speed)
+        ctes.append(ctrl.last_cte)
 
-    return xs, ys, thetas, steers, speeds
+    return xs, ys, thetas, steers, speeds, ctes
 
 
 def simulate_all(sections, sx, sy, stheta, tag=''):
-    """Simulate every section in sequence, thread positions together."""
-    xs_all, ys_all, th_all, st_all, sp_all = [], [], [], [], []
+    """Simulate every section in sequence, thread positions together.
+
+    Returns:
+        xs_all, ys_all, th_all, st_all, sp_all  -- per-step arrays
+        cte_all     -- signed cross-track error (cm) per step; + = left of path
+        sec_spans   -- list of (start_idx, n_steps, label) per section
+        (cx, cy, cth)  -- final pose
+    """
+    xs_all, ys_all, th_all, st_all, sp_all, cte_all = [], [], [], [], [], []
+    sec_spans = []
     cx, cy, cth = sx, sy, stheta
 
     for path, label, _ in sections:
-        xs, ys, ths, sts, sps = simulate_section(path, cx, cy, cth, label)
-        xs_all.extend(xs);  ys_all.extend(ys);  th_all.extend(ths)
-        st_all.extend(sts); sp_all.extend(sps)
+        xs, ys, ths, sts, sps, ctes = simulate_section(path, cx, cy, cth, label)
+        start = len(xs_all)
+        xs_all.extend(xs);   ys_all.extend(ys);  th_all.extend(ths)
+        st_all.extend(sts);  sp_all.extend(sps); cte_all.extend(ctes)
+        sec_spans.append((start, len(xs), label))
         cx, cy, cth = xs[-1], ys[-1], ths[-1]
         print(f"  [{tag}] {label:<52}  end=({cx:.0f},{cy:.0f})  steps={len(xs)}")
 
-    return xs_all, ys_all, th_all, st_all, sp_all, (cx, cy, cth)
+    return xs_all, ys_all, th_all, st_all, sp_all, cte_all, sec_spans, (cx, cy, cth)
 
 
 # ── Drawing helpers ───────────────────────────────────────────────────────────
@@ -560,7 +571,7 @@ def main():
     cx, cy, cth = 150.0, float(CL), start_th
 
     for lap in range(3):
-        xs, ys, ths, sts, sps, (cx, cy, cth) = \
+        xs, ys, ths, sts, sps, _, _, (cx, cy, cth) = \
             simulate_all(open_secs, cx, cy, cth, f'OPEN {dir_tag} L{lap+1}')
         open_laps_xs.append(xs)
         open_laps_ys.append(ys)
@@ -576,8 +587,10 @@ def main():
     print(f"\n=== OBSTACLE CHALLENGE ({dir_tag}, 3 laps + parking) ===")
     obs_laps_xs, obs_laps_ys = [], []
     obs_st, obs_sp = [], []
+    obs_cte_all, obs_spans_all = [], []
     cx, cy, cth = 150.0, float(CL), start_th
     last_sign = None
+    step_offset = 0
 
     for lap in range(3):
         if lap < 2:
@@ -591,12 +604,16 @@ def main():
                 print(f"  Last sign {'GREEN' if last_sign==GREEN else 'none'} -> lap 3 SAME direction")
                 secs = obs_secs
 
-        xs, ys, ths, sts, sps, (cx, cy, cth) = \
+        xs, ys, ths, sts, sps, ctes, spans, (cx, cy, cth) = \
             simulate_all(secs, cx, cy, cth, f'OBS {dir_tag} L{lap+1}')
         obs_laps_xs.append(xs)
         obs_laps_ys.append(ys)
         obs_st.extend(sts)
         obs_sp.extend(sps)
+        obs_cte_all.extend(ctes)
+        for start, n, lbl in spans:
+            obs_spans_all.append((step_offset + start, n, lbl))
+        step_offset += len(xs)
 
         if lap < 2:
             for _, _, pillars in secs:
@@ -608,7 +625,7 @@ def main():
     print(f"  Parking at x={final_lot_x:.0f}...")
     park_path = TrajectoryBuilder.parking_approach(
         cx, cy, cth, final_lot_x, lot_y, LOT_THETA)
-    pxp, pyp, _, _, _ = simulate_section(park_path, cx, cy, cth, 'parking')
+    pxp, pyp, _, _, _, _ = simulate_section(park_path, cx, cy, cth, 'parking')
 
     # Drive-in: straight south from lot entry into the space between the pink walls
     cx_a, cy_a, cth_a = pxp[-1], pyp[-1], LOT_THETA
@@ -616,7 +633,7 @@ def main():
     drive_in_path = TrajectoryBuilder.straight(
         final_lot_x, lot_y,
         final_lot_x, lot_y - stop_dist)
-    pxd, pyd, _, _, _ = simulate_section(drive_in_path, cx_a, cy_a, cth_a, 'park_drive_in')
+    pxd, pyd, _, _, _, _ = simulate_section(drive_in_path, cx_a, cy_a, cth_a, 'park_drive_in')
 
     t_obs = sum(len(lx) for lx in obs_laps_xs) * DT
     print(f"\nOpen Challenge:     {t_open:.1f} s  ({int(t_open/DT)} steps)")
@@ -625,15 +642,16 @@ def main():
     # =========================================================================
     # Figure  --  2 challenge maps (top) + steering + speed (bottom)
     # =========================================================================
-    fig = plt.figure(figsize=(22, 16))
-    gs  = GridSpec(3, 2, figure=fig,
-                   height_ratios=[4.0, 0.9, 0.9],
-                   hspace=0.48, wspace=0.26)
+    fig = plt.figure(figsize=(22, 19))
+    gs  = GridSpec(4, 2, figure=fig,
+                   height_ratios=[4.0, 0.9, 0.9, 0.9],
+                   hspace=0.50, wspace=0.26)
 
     ax_open = fig.add_subplot(gs[0, 0])
     ax_obs  = fig.add_subplot(gs[0, 1])
     ax_st   = fig.add_subplot(gs[1, :])
     ax_sp   = fig.add_subplot(gs[2, :])
+    ax_cte  = fig.add_subplot(gs[3, :])
 
     LAP_COLS  = ['#009933', '#0044cc', '#cc5500']
     LAP_NAMES = ['Lap 1', 'Lap 2', 'Lap 3']
@@ -746,6 +764,64 @@ def main():
     ax_sp.set_ylabel('cm/s', fontsize=8)
     ax_sp.legend(fontsize=7)
     ax_sp.grid(True, alpha=0.22)
+
+    # ── Cross-track error chart (obstacle challenge) ─────────────────────────
+    # Section-type background bands:  swerve=orange, corner=purple, straight=transparent
+    C_BAND_SWV = '#ffddcc'
+    C_BAND_COR = '#eeddff'
+    cte_arr = np.array(obs_cte_all)
+    t_cte   = np.arange(len(cte_arr)) * DT
+    for start, n, lbl in obs_spans_all:
+        t0 = start * DT
+        t1 = (start + n) * DT
+        if '+' in lbl:                          # pillar swerve
+            ax_cte.axvspan(t0, t1, color=C_BAND_SWV, alpha=0.55, zorder=0)
+        elif 'Corner' in lbl:                   # 90-degree corner
+            ax_cte.axvspan(t0, t1, color=C_BAND_COR, alpha=0.55, zorder=0)
+    # Lap boundary lines
+    for t_end in lap_ends:
+        ax_cte.axvline(t_end, color='#888', lw=0.8, ls=':', zorder=1)
+    # Guide lines
+    for level, ls in [(0, '-'), (1, '--'), (-1, '--'), (2, ':'), (-2, ':')]:
+        ax_cte.axhline(level, color='#aaaaaa' if level == 0 else '#cccccc',
+                       lw=0.7, ls=ls, zorder=1)
+    ax_cte.plot(t_cte, cte_arr, color='#007799', lw=0.6, zorder=2)
+    ax_cte.set_ylim(-8, 8)
+    ax_cte.set_title(
+        'Obstacle Challenge  --  Cross-Track Error  (+ = left of path  |  '
+        f'peak = {cte_arr.__abs__().max():.1f} cm  |  RMS = {float(np.sqrt((cte_arr**2).mean())):.2f} cm)',
+        fontsize=9)
+    ax_cte.set_xlabel('Time (s)', fontsize=8)
+    ax_cte.set_ylabel('CTE (cm)', fontsize=8)
+    ax_cte.grid(True, alpha=0.15)
+    # Section-type legend patches
+    cte_legend = [
+        mpatches.Patch(color=C_BAND_SWV, alpha=0.8, label='Pillar swerve'),
+        mpatches.Patch(color=C_BAND_COR, alpha=0.8, label='Corner'),
+        mpatches.Patch(color='white',    alpha=0.0, label='Straight (white)'),
+        mpatches.Patch(color='#aaaaaa',  alpha=0.6, label='0 cm ref'),
+        mpatches.Patch(color='#cccccc',  alpha=0.6, label='±1 / ±2 cm refs'),
+    ]
+    ax_cte.legend(handles=cte_legend, loc='upper right', fontsize=7, framealpha=0.88)
+
+    # Print per-section CTE stats to console
+    print("\n--- Cross-track error by section type (obstacle challenge) ---")
+    swerve_ctes, corner_ctes, straight_ctes = [], [], []
+    for start, n, lbl in obs_spans_all:
+        chunk = cte_arr[start:start + n]
+        if '+' in lbl:
+            swerve_ctes.extend(chunk)
+        elif 'Corner' in lbl:
+            corner_ctes.extend(chunk)
+        else:
+            straight_ctes.extend(chunk)
+    for name, arr in [('Straight', np.array(straight_ctes)),
+                      ('Corner',   np.array(corner_ctes)),
+                      ('Swerve',   np.array(swerve_ctes))]:
+        if len(arr):
+            print(f"  {name:<10}  peak={arr.__abs__().max():.2f} cm  "
+                  f"RMS={float(np.sqrt((arr**2).mean())):.2f} cm  "
+                  f"mean={arr.mean():.2f} cm")
 
     plt.suptitle(
         'WRO 2026 Future Engineers  --  Both Challenges  |  3 Laps Each  |  '
