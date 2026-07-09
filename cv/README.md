@@ -241,7 +241,7 @@ The classification is based only on the image position (2D), not the real-world 
 The next feature will determine the relative distance of a pillar away from the camera.
 
 
-## Feature 7: Approximate Distance Estimation
+## Feature 6: Approximate Distance Estimation
 
 ### Purpose
 The purpose of this feature is to estimate how close a detected pillar is to the camera. This is important because the robot should not react to every detected pillar in the same way. A far pillar may only require preparation, while a close pillar may require the robot to commit to an avoidance maneuver.
@@ -285,6 +285,55 @@ This feature does not calculate exact real-world distance. It only gives an appr
 ### Next Step
 The next feature will convert detection information into navigation output. It will use pillar color, confidence, horizontal position, and approximate distance to produce robot-useful commands such as passing to the left of a red pillar or to the right of a green pillar.
 
+
+## Feature 7: Navigation Output
+
+### Purpose
+The purpose of this feature is to convert computer vision detections into a structured navigation output. Previous features detected red and green pillars and extracted information such as color, position, distance level, and confidence. This feature uses that information to produce a robot-useful output that describes whether the robot should continue normal driving or prepare to avoid a pillar.
+
+This feature does not directly control the motors. It only provides decision information that can later be used by the robot control system.
+
+### Design Logic
+The WRO rule states that the robot must pass on the left side of a red pillar and on the right side of a green pillar. This rule is implemented as a function that converts pillar color into the required passing side.
+
+The system may detect multiple colored objects in one frame. Therefore, the navigation output should not blindly use every detection. The system first filters detections using a minimum navigation confidence and allowed distance levels. For the current version, far pillars are ignored for immediate action, while medium and close pillars are considered relevant.
+
+If multiple usable detections exist, the system selects one primary detection. The priority is to prefer close pillars first, then higher-confidence detections, and then larger-area detections. This helps the robot focus on the pillar most likely to affect its path.
+
+### Algorithm Steps
+Starting from the accepted detections produced in the previous feature:
+
+1. Take the list of accepted red and green pillar detections.
+2. Remove detections with confidence below the navigation confidence threshold.
+3. Remove detections whose distance level is not important for immediate navigation.
+4. If no usable detection remains, output `continue_normal_driving`.
+5. If usable detections remain, select the primary detection.
+6. Give priority to close detections, then higher confidence, then larger area.
+7. Read the color of the selected primary detection.
+8. Convert the pillar color into the required passing side.
+9. For a red pillar, set the required passing side to `left`.
+10. For a green pillar, set the required passing side to `right`.
+11. Create a navigation output dictionary containing the action, pillar color, required passing side, horizontal position, distance level, confidence, center point, and area.
+12. Display or print the navigation output for testing and debugging.
+
+### Files Added or Modified
+* `config.py`: Added navigation confidence and action distance thresholds.
+* `vision.py`: Added functions for selecting the primary detection and creating navigation output.
+* `test_vision.py`: Updated the testing script to print the navigation output during live detection.
+
+### Testing Method
+The feature was tested using the live camera feed. When no reliable pillar-like object was visible, the output should be `continue_normal_driving`. When a reliable red object was detected at a medium or close distance, the output should recommend avoiding the pillar and passing on its left side. When a reliable green object was detected at a medium or close distance, the output should recommend avoiding the pillar and passing on its right side.
+
+Testing should include cases with no object, one red object, one green object, multiple colored objects, weak detections, and far detections.
+
+### Result
+The vision system can now produce a structured navigation output from the detected pillars. This output connects the perception system to the future robot control system while keeping the CV module separate from motor control.
+
+### Limitations
+This feature does not yet implement the full avoidance maneuver or decide when the robot should return to normal driving after passing a pillar. It also does not directly control steering or speed. Those behaviors should be implemented later using a state machine that considers the navigation output, robot sensors, and the current driving state.
+
+### Next Step
+The next feature will improve mask quality and HSV tuning. This will make red and green detection more stable under different lighting conditions and with the final robot camera.
 
 
 

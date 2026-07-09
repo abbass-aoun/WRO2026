@@ -19,6 +19,8 @@ from config import(
     RIGHT_REGION_RATIO,
     FAR_PILLAR_HEIGHT,
     CLOSE_PILLAR_HEIGHT,
+    NAVIGATION_MIN_CONFIDENCE,
+    ACTION_DISTANCE_LEVELS,
     BOUNDING_BOX_THICKNESS,
     CENTER_DOT_RADIUS
 )
@@ -344,3 +346,106 @@ def draw_detections(frame, detections):
         )
 
     return output_frame
+
+
+def get_required_pass_side(color_name):
+    """
+    Converts pillar color into the required passing side.
+
+    Args:
+        color_name: Color of the detected pillar.
+    
+    Returns:
+        required_pass_side
+    """
+
+    if color_name == "red":
+        return "left"
+    
+    if color_name == "green":
+        return "right"
+    
+    return "unknown"
+
+
+def select_primary_detection(detections):
+    """
+    Selects the most important detection for navigation.
+
+    Args:
+        detections: A list of accepted pillars.
+
+    Returns:
+        primary_detection: The detection with the highest priority, or None.
+    """
+
+    if not detections:
+        return None
+    
+    usable_detections = []
+
+    for detection in detections:
+        if detection["confidence"] < NAVIGATION_MIN_CONFIDENCE:
+            continue
+        
+        if detection["distance_level"] not in ACTION_DISTANCE_LEVELS:
+            continue
+
+        usable_detections.append(detection)
+
+    if not usable_detections:
+        return None
+    
+    primary_detection = max(
+        usable_detections,
+        key = lambda detection: (
+            detection["distance_level"] == "close",
+            detection["confidence"],
+            detection["area"]
+        )
+    )
+
+    return primary_detection
+
+
+def create_navigation_output(detections):
+    """
+    Creates a navigation output from the current pillar detections.
+
+    Args:
+        detections: List of accepted pillar detections.
+
+    Returns:
+        navigation_output: Dictionary describing the recommended navigation meaning.
+    """
+
+    primary_detection = select_primary_detection(detections)
+
+    if primary_detection is None:
+        return {
+            "action": "continue_normal_driving",
+            "reason": "no_reliable_pillar",
+            "pillar_color": None,
+            "required_pass_side": None,
+            "horizontal_position": None,
+            "distance_level": None,
+            "confidence": 0.0
+        }
+    
+    color_name = primary_detection["color"]
+    required_pass_side = get_required_pass_side(color_name)
+
+    navigation_output = {
+        "action": "avoid_pillar",
+        "reason": "reliable_pillar_detected",
+        "pillar_color": color_name,
+        "required_pass_side": required_pass_side,
+        "horizontal_position": primary_detection["horizontal_position"],
+        "distance_level": primary_detection["distance_level"],
+        "confidence": primary_detection["confidence"],
+        "center_x": primary_detection["center_x"],
+        "center_y": primary_detection["center_y"],
+        "area": primary_detection["area"],
+    }
+
+    return navigation_output

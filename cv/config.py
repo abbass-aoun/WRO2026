@@ -69,3 +69,13 @@ RIGHT_REGION_RATIO = 0.66
 FAR_PILLAR_HEIGHT = 60
 CLOSE_PILLAR_HEIGHT = 150
 
+
+# Navigation decision thresholds
+
+# Minimum confidence needed for a detection to be used for navigation
+NAVIGATION_MIN_CONFIDENCE = 0.55
+
+# Distance levels that are important for navigation.
+# For now, we will ignore far pillars and react only to medium or close pillars.
+ACTION_DISTANCE_LEVELS = ["medium", "close"]
+

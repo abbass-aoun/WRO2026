@@ -7,7 +7,8 @@ from vision import (
     create_red_mask, 
     create_green_mask,
     draw_detections,
-    detect_pillars
+    detect_pillars,
+    create_navigation_output
 )
 
 
@@ -28,6 +29,9 @@ def main():
         green_detections = detect_pillars(green_mask, "green", frame_width)
 
         all_detections = red_detections + green_detections
+
+        navigation_output = create_navigation_output(all_detections)
+        print(navigation_output)
 
         output_frame = draw_detections(frame, all_detections)
 
