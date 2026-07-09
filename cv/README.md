@@ -202,6 +202,93 @@ During testing, red false detections appeared on skin under certain lighting con
 The next feature will classify the accepted pillar position relative to the camera view, such as left, center, or right. This will make the detection output more useful for navigation decisions.
 
 
+## Feature 5: Camera-Relative Pillar Position
+
+### Purpose
+The purpose of this feature is to classify the horizontal position of each detected pillar relative to the camera view. After detecting a red or green pillar, the robot needs to know whether the pillar appears on the left, center, or right side of the image. This information is important for later navigation decisions.
+
+### Design Logic
+The camera image is divided into three horizontal regions: left, center, and right. The center x-coordinate of each detected pillar is compared with two boundaries based on the frame width. If the center of the pillar is in the left third of the image, the detection is classified as left. If it is in the right third, it is classified as right. Otherwise, it is classified as center.
+
+This method is simple and fast, which makes it suitable for real-time robot vision. It does not require a trained model and can run on lower-power hardware such as a Raspberry Pi.
+
+### Algorithm Steps
+Starting from the filtered detections produced in Feature 4:
+
+1. Read the width of the current camera frame.
+2. Calculate the left boundary as 33% of the frame width.
+3. Calculate the right boundary as 66% of the frame width.
+4. Compare the pillar’s center_x value with these boundaries.
+5. Classify the pillar as left, right, or center depending if its center is left of the left bound, right of the right bound, or none respectively.
+6. Store this result inside the detection dictionary as horizontal_position.
+7. Display the position label on the camera feed for testing and debugging.
+
+### Files Added or Modified
+* `config.py`: Added left and right region ratios for dividing the image into horizontal zones.
+* `vision.py`: Added a function for classifying horizontal position and updated the detection output to include this position.
+* `test_vision.py`: Updated the detection calls to pass the camera frame width.
+
+### Testing Method
+The feature was tested using a live camera feed. A red or green object was moved across the left, center, and right parts of the camera frame. The detection label was checked to confirm that the displayed position matched the object's actual location in the image.
+
+### Result
+The vision system can now classify each accepted red or green detection as left, center, or right relative to the camera frame. This makes the detection output more useful for later navigation logic.
+
+### Limitations
+The classification is based only on the image position (2D), not the real-world position of the object (3D). Camera angle, lens distortion, and perspective can affect where an object appears in the image. The region boundaries may need tuning after the camera is mounted on the robot.
+
+### Next Step
+The next feature will determine the relative distance of a pillar away from the camera.
+
+
+## Feature 7: Approximate Distance Estimation
+
+### Purpose
+The purpose of this feature is to estimate how close a detected pillar is to the camera. This is important because the robot should not react to every detected pillar in the same way. A far pillar may only require preparation, while a close pillar may require the robot to commit to an avoidance maneuver.
+
+### Design Logic
+The official pillar height is 100 mm. Since the physical height of the pillar is fixed, its height in the camera image can be used as an approximate indication of distance. A pillar that is far from the camera appears shorter in pixels, while a pillar that is close to the camera appears taller in pixels.
+
+This feature uses the bounding box height from the filtered detection and classifies the pillar distance as `far`, `medium`, or `close`. This is not an exact distance in centimeters. It is a practical distance category that can be used by later navigation logic.
+
+The thresholds are stored in `config.py` so they can be adjusted after testing with the final robot camera. This is important because pixel height depends on camera resolution, camera angle, lens, and mounting position.
+
+### Algorithm Steps
+Starting from the filtered and position-classified detections produced in the previous feature:
+
+1. Take each accepted pillar detection.
+2. Read the bounding box height of the detection.
+3. Compare the height with the far-distance threshold.
+4. If the height is below the far threshold, classify the pillar as `far`.
+5. Compare the height with the close-distance threshold.
+6. If the height is above the close threshold, classify the pillar as `close`.
+7. If the height is between both thresholds, classify the pillar as `medium`.
+8. Store the result in the detection dictionary as `distance_level`.
+9. Display the distance level in the detection label for testing and debugging.
+
+### Files Added or Modified
+* `config.py`: Added distance threshold values based on bounding box height in pixels.
+* `vision.py`: Added a function for estimating distance level and updated detections to include `distance_level`.
+* `test_vision.py`: No major structural change was required because it already displays the updated detection labels.
+
+### Testing Method
+The feature was tested using a live camera feed. A red or green object was moved closer to and farther from the camera. The displayed label was checked to confirm that the distance level changed between `far`, `medium`, and `close` as the object size changed in the image.
+
+The thresholds should be adjusted if the distance label changes too early or too late. Final tuning should be performed using the robot’s actual camera and the official pillar dimensions.
+
+### Result
+The vision system can now estimate whether a detected pillar is far, medium, or close based on its bounding box height. This adds useful information for future navigation decisions.
+
+### Limitations
+This feature does not calculate exact real-world distance. It only gives an approximate distance category. The result depends on camera resolution, camera angle, lens distortion, and mask quality. Accurate distance in centimeters will require camera calibration using the final Raspberry Pi camera setup.
+
+### Next Step
+The next feature will convert detection information into navigation output. It will use pillar color, confidence, horizontal position, and approximate distance to produce robot-useful commands such as passing to the left of a red pillar or to the right of a green pillar.
+
+
+
+
+
 
 
 

@@ -63,3 +63,9 @@ CENTER_DOT_RADIUS = 5
 LEFT_REGION_RATIO = 0.33
 RIGHT_REGION_RATIO = 0.66
 
+# Distance estimation thresholds based on bounding box height in pixels.
+# In the camera image, a closer pillar appears taller.
+# Initial values - to be tuned with the rasberry pi camera.
+FAR_PILLAR_HEIGHT = 60
+CLOSE_PILLAR_HEIGHT = 150
+

@@ -17,6 +17,8 @@ from config import(
     MIN_CONFIDENCE,
     LEFT_REGION_RATIO,
     RIGHT_REGION_RATIO,
+    FAR_PILLAR_HEIGHT,
+    CLOSE_PILLAR_HEIGHT,
     BOUNDING_BOX_THICKNESS,
     CENTER_DOT_RADIUS
 )
@@ -183,6 +185,26 @@ def classify_horizontal_position(center_x, frame_width):
     return "center"
 
 
+def estimate_distance_level(height):
+    """
+    Estimates the approximate distance level of a detected pillar using its bounding box height.
+
+    Args:
+        height: Bounding box height in pixels.
+
+    Returns:
+        distance_level: "far", "medium", or "close".
+    """
+
+    if height < FAR_PILLAR_HEIGHT:
+        return "far"
+    
+    if height > CLOSE_PILLAR_HEIGHT:
+        return "close"
+    
+    return "medium"
+
+
 def detect_pillars(mask, color_name, frame_width):
     """
     Detects pillar-like colored regions from a binary mask.
@@ -237,6 +259,7 @@ def detect_pillars(mask, color_name, frame_width):
         center_y = y + height // 2
 
         horizontal_position = classify_horizontal_position(center_x, frame_width)
+        distance_level = estimate_distance_level(height)
 
         detection = {
             "color": color_name,
@@ -247,6 +270,7 @@ def detect_pillars(mask, color_name, frame_width):
             "center_x": center_x,
             "center_y": center_y,
             "horizontal_position": horizontal_position,
+            "distance_level": distance_level,
             "area": area,
             "aspect_ratio": aspect_ratio,
             "extent": extent,
@@ -280,6 +304,7 @@ def draw_detections(frame, detections):
         center_x = detection["center_x"]
         center_y = detection["center_y"]
         horizontal_position = detection["horizontal_position"]
+        distance_level = detection["distance_level"]
         color_name = detection["color"]
         # area = detection["area"]
         color_name = detection["color"]
@@ -306,7 +331,7 @@ def draw_detections(frame, detections):
             -1
         )
 
-        label = f"{color_name} {horizontal_position} conf = {confidence:.2f}"
+        label = f"{color_name} - {horizontal_position} - {distance_level} - conf = {confidence:.2f}"
 
         cv.putText(
             output_frame,
