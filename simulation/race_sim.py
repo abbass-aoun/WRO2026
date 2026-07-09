@@ -404,22 +404,23 @@ def draw_track(ax, title, lot_x, lot_y, start_x=150.0):
 
     # ── Corner lines — 30° geometry (WRO 2026 Figure 11) ─────────────────────
     # T30 = distance along the inner wall face where the line terminates.
-    # Two lines per corner: orange at 30° from horiz, blue at 60° from horiz.
+    # Orange = steep line (60° from horiz, toward side face of inner obstacle)
+    # Blue   = shallow line (30° from horiz, toward bottom/top face)
     T30 = INNER_LO * math.tan(math.radians(30))   # ≈ 57.7 cm
     LW  = 2.5
 
     # BL: outer (0,0) → inner obstacle corner (100,100)
-    ax.plot([0,     INNER_LO], [0,     T30      ], color=ORG, lw=LW, zorder=3)
-    ax.plot([0,     T30      ], [0,     INNER_LO ], color=BLU, lw=LW, zorder=3)
+    ax.plot([0,     INNER_LO], [0,     T30      ], color=BLU, lw=LW, zorder=3)
+    ax.plot([0,     T30      ], [0,     INNER_LO ], color=ORG, lw=LW, zorder=3)
     # BR: outer (300,0) → inner (200,100)
-    ax.plot([OUTER, INNER_HI], [0,     T30      ], color=ORG, lw=LW, zorder=3)
-    ax.plot([OUTER, OUTER-T30], [0,    INNER_LO ], color=BLU, lw=LW, zorder=3)
+    ax.plot([OUTER, INNER_HI], [0,     T30      ], color=BLU, lw=LW, zorder=3)
+    ax.plot([OUTER, OUTER-T30], [0,    INNER_LO ], color=ORG, lw=LW, zorder=3)
     # TR: outer (300,300) → inner (200,200)
-    ax.plot([OUTER, INNER_HI], [OUTER, OUTER-T30], color=ORG, lw=LW, zorder=3)
-    ax.plot([OUTER, OUTER-T30], [OUTER, INNER_HI], color=BLU, lw=LW, zorder=3)
+    ax.plot([OUTER, INNER_HI], [OUTER, OUTER-T30], color=BLU, lw=LW, zorder=3)
+    ax.plot([OUTER, OUTER-T30], [OUTER, INNER_HI], color=ORG, lw=LW, zorder=3)
     # TL: outer (0,300) → inner (100,200)
-    ax.plot([0,     INNER_LO], [OUTER, OUTER-T30], color=ORG, lw=LW, zorder=3)
-    ax.plot([0,     T30      ], [OUTER, INNER_HI ], color=BLU, lw=LW, zorder=3)
+    ax.plot([0,     INNER_LO], [OUTER, OUTER-T30], color=BLU, lw=LW, zorder=3)
+    ax.plot([0,     T30      ], [OUTER, INNER_HI ], color=ORG, lw=LW, zorder=3)
 
     # ── Dashed centreline loop  CMYK(0,0,0,30) ───────────────────────────────
     ax.plot([CL, CH, CH, CL, CL], [CL, CL, CH, CH, CL],
@@ -609,6 +610,14 @@ def main():
         cx, cy, cth, final_lot_x, lot_y, LOT_THETA)
     pxp, pyp, _, _, _ = simulate_section(park_path, cx, cy, cth, 'parking')
 
+    # Drive-in: straight south from lot entry into the space between the pink walls
+    cx_a, cy_a, cth_a = pxp[-1], pyp[-1], LOT_THETA
+    stop_dist = LOT_DEPTH - ROBOT_LENGTH / 2   # = 18.0 cm
+    drive_in_path = TrajectoryBuilder.straight(
+        final_lot_x, lot_y,
+        final_lot_x, lot_y - stop_dist)
+    pxd, pyd, _, _, _ = simulate_section(drive_in_path, cx_a, cy_a, cth_a, 'park_drive_in')
+
     t_obs = sum(len(lx) for lx in obs_laps_xs) * DT
     print(f"\nOpen Challenge:     {t_open:.1f} s  ({int(t_open/DT)} steps)")
     print(f"Obstacle Challenge: {t_obs:.1f} s  ({int(t_obs/DT)} steps) + parking")
@@ -677,13 +686,15 @@ def main():
         ax_obs.plot(lxs, lys, '-', color=LAP_COLS[i], lw=1.1,
                     alpha=0.85, label=lap_label, zorder=8)
 
-    _plot_path(ax_obs, park_path, C_PARK_PLN, lw=2.0, alpha=0.85)
+    _plot_path(ax_obs, park_path,    C_PARK_PLN, lw=2.0, alpha=0.85)
+    _plot_path(ax_obs, drive_in_path, C_PARK_PLN, lw=2.0, alpha=0.85)
     ax_obs.plot(pxp, pyp, '-', color=C_PARK_CAR, lw=1.4, alpha=0.9, zorder=8)
+    ax_obs.plot(pxd, pyd, '-', color=C_PARK_CAR, lw=1.4, alpha=0.9, zorder=8)
 
     ax_obs.plot(150, CL, 's', color='gold', ms=11, mec='#444', zorder=10)
     ax_obs.text(158, CL+10, 'START', fontsize=7, color='#553300', zorder=11)
-    ax_obs.plot(pxp[-1], pyp[-1], '*', color='gold', ms=14, mec='#444', zorder=10)
-    ax_obs.text(pxp[-1]+3, pyp[-1]-12, 'PARKED', fontsize=7, color='#880088')
+    ax_obs.plot(pxd[-1], pyd[-1], '*', color='gold', ms=14, mec='#444', zorder=10)
+    ax_obs.text(pxd[-1]+3, pyd[-1]+2, 'PARKED', fontsize=7, color='#880088')
 
     rule_note = ('Lap 3: REVERSED (last sign=RED)'
                  if last_sign == RED else

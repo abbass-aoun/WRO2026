@@ -17,8 +17,8 @@ Controls:
 
 What you see:
     Left panel   -- 300 x 300 cm WRO 2026 field (to scale at 2 px/cm)
-                    * Orange diagonal lines  = CCW corner markers
-                    * Blue   diagonal lines  = CW  corner markers
+                    * Orange diagonal lines  = steep corner lines (60° from horiz)
+                    * Blue   diagonal lines  = shallow corner lines (30° from horiz)
                     * Rounded gray square    = inner obstacle
                     * Pink rectangle         = parking lot
                     * Coloured dots          = pillars  (R=red, G=green)
@@ -55,7 +55,7 @@ from simulation.race_sim import (
     CCW_LOT_X, CCW_LOT_Y,
     CW_LOT_X,  CW_LOT_Y,
     LOT_THETA, LOT_WIDTH, LOT_DEPTH, MARKER_W, MARKER_L,
-    BASE_SPEED, DT, WHEELBASE,
+    BASE_SPEED, DT, WHEELBASE, ROBOT_LENGTH,
 )
 from trajectory.builder import TrajectoryBuilder, RED, GREEN
 
@@ -130,7 +130,7 @@ def _draw_path(surf, path, color, width=2):
 # Static track surface  (built once per run)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def make_track_surface(sections, park_path, lot_x, lot_y, pillars, fnt_sm):
+def make_track_surface(sections, park_path, drive_in_path, lot_x, lot_y, pillars, fnt_sm):
     surf = pygame.Surface((WIN_W, WIN_H))
     surf.fill(BG)
 
@@ -164,23 +164,23 @@ def make_track_surface(sections, park_path, lot_x, lot_y, pillars, fnt_sm):
 
     # ── Diagonal corner markers — 30° geometry (WRO 2026 Figure 11)
     # T30 = 100 * tan(30°) ≈ 57.7 cm — where each line meets the inner wall face
-    # Orange: 30° from horizontal   Blue: 60° from horizontal (30° from vertical)
+    # Orange = steep (60° from horiz, toward side face)   Blue = shallow (30° from horiz)
     T30 = 100 * math.tan(math.radians(30))   # ≈ 57.7
     def cl(a, b, col):
         pygame.draw.line(surf, col, w2s(*a), w2s(*b), 3)
 
     # BL outer (0,0)
-    cl((0, 0),   (100, T30),       ORG_L)
-    cl((0, 0),   (T30, 100),       BLU_L)
+    cl((0, 0),   (100, T30),       BLU_L)
+    cl((0, 0),   (T30, 100),       ORG_L)
     # BR outer (300,0)
-    cl((300, 0), (200, T30),       ORG_L)
-    cl((300, 0), (300-T30, 100),   BLU_L)
+    cl((300, 0), (200, T30),       BLU_L)
+    cl((300, 0), (300-T30, 100),   ORG_L)
     # TR outer (300,300)
-    cl((300,300),(200, 300-T30),   ORG_L)
-    cl((300,300),(300-T30, 200),   BLU_L)
+    cl((300,300),(200, 300-T30),   BLU_L)
+    cl((300,300),(300-T30, 200),   ORG_L)
     # TL outer (0,300)
-    cl((0, 300), (100, 300-T30),   ORG_L)
-    cl((0, 300), (T30, 200),       BLU_L)
+    cl((0, 300), (100, 300-T30),   BLU_L)
+    cl((0, 300), (T30, 200),       ORG_L)
 
     # ── Parking lot (light fill + two magenta marker blocks)
     lx1, ly1 = w2s(lot_x - LOT_WIDTH/2, lot_y)
@@ -208,6 +208,8 @@ def make_track_surface(sections, park_path, lot_x, lot_y, pillars, fnt_sm):
         _draw_path(surf, path, col, 2)
     if park_path is not None:
         _draw_path(surf, park_path, COL_PRK, 2)
+    if drive_in_path is not None:
+        _draw_path(surf, drive_in_path, COL_PRK, 2)
 
     # ── Starting zone  200x500 mm = 20x50 cm, dashed CMYK(0,0,0,30)
     # 20 cm centred at x=150 along the bottom straight, y=0..50
@@ -406,7 +408,7 @@ def draw_panel(surf, fonts, direction, sec_name, sec_i,
         (COL_SWV, "Pillar swerve"),
         (COL_COR, "Corner (Bezier)"),
         (COL_STR, "Straight"),
-        (COL_PRK, "Parking curve"),
+        (COL_PRK, "Parking (approach+in)"),
     ]:
         pygame.draw.rect(surf, col, (PAN_X+pad, y+4, 16, 6), border_radius=2)
         text(f"   {lbl}", font_sm, TXT_D, ox=16); gap(1)
@@ -429,8 +431,8 @@ def draw_panel(surf, fonts, direction, sec_name, sec_i,
 
 def compute_run(sections, start_theta, lot_x, lot_y):
     """
-    Run bicycle-model simulation through all sections + parking approach.
-    Returns (frames_list, park_path) where each frame is a tuple:
+    Run bicycle-model simulation through all sections + parking approach + drive-in.
+    Returns (frames_list, park_path, drive_in_path) where each frame is a tuple:
         (x, y, theta, steer_deg, speed_cm_s, sec_index, sec_label)
     """
     frames = []
@@ -447,8 +449,18 @@ def compute_run(sections, start_theta, lot_x, lot_y):
     xs, ys, ths, sts, sps = simulate_section(park_path, cx, cy, cth)
     for row in zip(xs, ys, ths, sts, sps):
         frames.append((*row, 8, "Parking approach"))
+    cx, cy, cth = xs[-1], ys[-1], LOT_THETA
 
-    return frames, park_path
+    # Drive-in: straight south between the two pink marker walls
+    stop_dist = LOT_DEPTH - ROBOT_LENGTH / 2   # = 18.0 cm
+    drive_in_path = TrajectoryBuilder.straight(
+        lot_x, lot_y,
+        lot_x, lot_y - stop_dist)
+    xs, ys, ths, sts, sps = simulate_section(drive_in_path, cx, cy, cth)
+    for row in zip(xs, ys, ths, sts, sps):
+        frames.append((*row, 9, "Parking drive-in"))
+
+    return frames, park_path, drive_in_path
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -464,8 +476,8 @@ def _regenerate():
     ccw_secs = build_ccw_sections(ccw_p)
     cw_secs  = build_cw_sections(cw_p)
 
-    ccw_frames, ccw_park = compute_run(ccw_secs, 0.0,      ccw_lot_x, CCW_LOT_Y)
-    cw_frames,  cw_park  = compute_run(cw_secs,  math.pi,  cw_lot_x,  CW_LOT_Y)
+    ccw_frames, ccw_park, ccw_drive_in = compute_run(ccw_secs, 0.0,     ccw_lot_x, CCW_LOT_Y)
+    cw_frames,  cw_park,  cw_drive_in  = compute_run(cw_secs,  math.pi, cw_lot_x,  CW_LOT_Y)
 
     ccw_pills = list(ccw_p.values())
     cw_pills  = list(cw_p.values())
@@ -476,8 +488,8 @@ def _regenerate():
           f"lot_x={cw_lot_x:.0f}")
 
     return [
-        ('CCW', C_CCW, ccw_frames, ccw_secs, ccw_park, ccw_lot_x, CCW_LOT_Y, ccw_pills),
-        ('CW',  C_CW,  cw_frames,  cw_secs,  cw_park,  cw_lot_x,  CW_LOT_Y,  cw_pills),
+        ('CCW', C_CCW, ccw_frames, ccw_secs, ccw_park, ccw_drive_in, ccw_lot_x, CCW_LOT_Y, ccw_pills),
+        ('CW',  C_CW,  cw_frames,  cw_secs,  cw_park,  cw_drive_in,  cw_lot_x,  CW_LOT_Y,  cw_pills),
     ]
 
 
@@ -519,8 +531,8 @@ def main():
         trail.clear()
         full_trail = []
         state = 'run'
-        _, _, _, secs, park, lx, ly, pills = runs[idx]
-        track_surf = make_track_surface(secs, park, lx, ly, pills, font_sm)
+        _, _, _, secs, park, drive_in, lx, ly, pills = runs[idx]
+        track_surf = make_track_surface(secs, park, drive_in, lx, ly, pills, font_sm)
 
     load_run(0)
 
@@ -544,7 +556,7 @@ def main():
                     load_run(0); paused = False
 
         # Unpack current run
-        direction, car_col, frames, _, _, lot_x, lot_y, _ = runs[run_idx]
+        direction, car_col, frames, _, _, _, lot_x, lot_y, _ = runs[run_idx]
         total = len(frames)
 
         # Advance
@@ -561,7 +573,7 @@ def main():
                     nxt = run_idx + 1
                     if nxt < len(runs):
                         load_run(nxt)
-                        direction, car_col, frames, _, _, lot_x, lot_y, _ = runs[run_idx]
+                        direction, car_col, frames, _, _, _, lot_x, lot_y, _ = runs[run_idx]
                         total = len(frames)
                     else:
                         state = 'done'
