@@ -216,6 +216,45 @@ class EKF:
         self._P = (np.eye(3) - K.reshape(3, 1) @ H) @ self._P
 
     # ------------------------------------------------------------------
+    # Update step -- gyro angular rate
+    # ------------------------------------------------------------------
+
+    def update_gyro_rate(self, omega_measured: float, dt: float,
+                         R_gyro: float = 1e-5):
+        """
+        Correct the heading estimate using a gyro angular-rate reading.
+
+        The gyro measures dtheta/dt = omega (rad/s).  We integrate one step
+        to get the expected heading change and treat that as a soft heading
+        measurement.  Because gyro drift is slow (~0.01 deg/s for MEMS), the
+        noise R_gyro can be very small, making this update highly trusted.
+
+        WHEN TO CALL:
+            Every tick (50 Hz) immediately after predict().
+            If the IMU also gives an absolute heading, call update_imu() as
+            well (e.g. every 5th tick) to correct long-term gyro drift.
+
+        Args:
+            omega_measured: gyro angular velocity in rad/s        # MOCK until wired
+                            (BNO055: imu.gyro[2] for yaw axis)
+            dt:             time step in seconds (typically 0.02 s)
+            R_gyro:         gyro noise variance (rad^2 per step)  # TUNE ON REAL ROBOT
+                            Default 1e-5 ≈ (0.003 rad)^2 ≈ 0.18 deg per step — typical MEMS.
+        """
+        # Heading implied by integrating the gyro one step from current estimate
+        theta_from_gyro = _wrap(self._x[2] + omega_measured * dt)
+
+        # EKF update — same structure as update_imu() but with R_gyro instead of R_imu
+        H = np.array([[0.0, 0.0, 1.0]])
+        R = np.array([[R_gyro]])
+        y = _wrap(theta_from_gyro - self._x[2])          # innovation (angle-wrapped)
+        S = float((H @ self._P @ H.T + R)[0, 0])
+        K = (self._P @ H.T).flatten() / S                # Kalman gain, shape (3,)
+        self._x    = self._x + K * y
+        self._x[2] = _wrap(self._x[2])
+        self._P    = (np.eye(3) - K.reshape(3, 1) @ H) @ self._P
+
+    # ------------------------------------------------------------------
     # Write to Robot
     # ------------------------------------------------------------------
 

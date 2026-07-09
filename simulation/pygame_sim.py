@@ -516,6 +516,7 @@ def main():
     # ── Mutable state
     run_idx     = 0
     frame_idx   = 0
+    step_acc    = 0.0          # fractional step accumulator for speed-proportional playback
     trail       = collections.deque(maxlen=TRAIL_N)
     full_trail  = []          # every position since lap start (unbounded)
     paused      = False
@@ -525,9 +526,10 @@ def main():
     track_surf  = None
 
     def load_run(idx):
-        nonlocal run_idx, frame_idx, trail, full_trail, state, track_surf
+        nonlocal run_idx, frame_idx, step_acc, trail, full_trail, state, track_surf
         run_idx   = idx
         frame_idx = 0
+        step_acc  = 0.0
         trail.clear()
         full_trail = []
         state = 'run'
@@ -559,10 +561,16 @@ def main():
         direction, car_col, frames, _, _, _, lot_x, lot_y, _ = runs[run_idx]
         total = len(frames)
 
-        # Advance
+        # Advance — speed-proportional: car visually slows down at corners
         if not paused:
             if state == 'run':
-                frame_idx = min(frame_idx + (5 if fast else 1), total)
+                fi_peek = min(frame_idx, total - 1)
+                cur_speed = frames[fi_peek][4]        # index 4 = speed_cm_s
+                speed_ratio = cur_speed / BASE_SPEED  # 0.2 at MIN_SPEED, 1.0 at BASE_SPEED
+                step_acc += (5.0 if fast else 1.0) * speed_ratio
+                advance    = int(step_acc)
+                step_acc  -= advance
+                frame_idx  = min(frame_idx + advance, total)
                 if frame_idx >= total:
                     state       = 'transition'
                     trans_timer = FPS * 2      # 2-second pause between runs

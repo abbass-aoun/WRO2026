@@ -588,6 +588,8 @@ def main():
     obs_laps_xs, obs_laps_ys = [], []
     obs_st, obs_sp = [], []
     obs_cte_all, obs_spans_all = [], []
+    obs_lap_spans_local = []   # (start, n, label) relative to each lap's own xs
+    secs_per_lap        = []   # which sections list was used per lap
     cx, cy, cth = 150.0, float(CL), start_th
     last_sign = None
     step_offset = 0
@@ -604,6 +606,7 @@ def main():
                 print(f"  Last sign {'GREEN' if last_sign==GREEN else 'none'} -> lap 3 SAME direction")
                 secs = obs_secs
 
+        secs_per_lap.append(secs)
         xs, ys, ths, sts, sps, ctes, spans, (cx, cy, cth) = \
             simulate_all(secs, cx, cy, cth, f'OBS {dir_tag} L{lap+1}')
         obs_laps_xs.append(xs)
@@ -611,6 +614,7 @@ def main():
         obs_st.extend(sts)
         obs_sp.extend(sps)
         obs_cte_all.extend(ctes)
+        obs_lap_spans_local.append(spans)
         for start, n, lbl in spans:
             obs_spans_all.append((step_offset + start, n, lbl))
         step_offset += len(xs)
@@ -636,8 +640,42 @@ def main():
     pxd, pyd, _, _, _, _ = simulate_section(drive_in_path, cx_a, cy_a, cth_a, 'park_drive_in')
 
     t_obs = sum(len(lx) for lx in obs_laps_xs) * DT
+    obs_lap_times = [len(lx) * DT for lx in obs_laps_xs]
     print(f"\nOpen Challenge:     {t_open:.1f} s  ({int(t_open/DT)} steps)")
     print(f"Obstacle Challenge: {t_obs:.1f} s  ({int(t_obs/DT)} steps) + parking")
+    for i, lt in enumerate(obs_lap_times):
+        print(f"  Lap {i+1}: {lt:.1f} s")
+
+    # ── Pillar proximity check ────────────────────────────────────────────
+    # Nominal swerve bypass is PILLAR_CLEARANCE_CM = 20 cm from pillar centre.
+    # Traffic sign body: 5x5 cm → effective collision radius ~5 cm.
+    MISS_CM      = 30.0   # flag if car never gets within 30 cm (too far, likely bypassed wrong lane)
+    COLLISION_CM =  5.0   # flag if car comes within 5 cm (sign body overlap risk)
+    missed_pillars = []
+    print("\n--- Pillar proximity check (obstacle challenge) ---")
+    for lap_i, (lap_xs, lap_ys, lap_spans, lap_secs) in enumerate(
+            zip(obs_laps_xs, obs_laps_ys, obs_lap_spans_local, secs_per_lap)):
+        lap_xs_a = np.array(lap_xs)
+        lap_ys_a = np.array(lap_ys)
+        for (start, n, _), (_, label, pils) in zip(lap_spans, lap_secs):
+            for px, py, pc in pils:
+                seg_x = lap_xs_a[start:start + n]
+                seg_y = lap_ys_a[start:start + n]
+                dists = np.hypot(seg_x - px, seg_y - py)
+                min_d = float(dists.min())
+                if min_d > MISS_CM:
+                    flag = "*** MISS ***"
+                    missed_pillars.append((lap_i + 1, label, px, py, min_d))
+                elif min_d < COLLISION_CM:
+                    flag = "!!! COLLISION !!!"
+                    missed_pillars.append((lap_i + 1, label, px, py, min_d))
+                else:
+                    flag = "ok"
+                print(f"  Lap {lap_i+1}  {label[:32]:<32}  "
+                      f"pillar@({px:.0f},{py:.0f})  "
+                      f"min={min_d:.1f} cm  {flag}")
+    if not missed_pillars:
+        print("  All pillars 5-30 cm from centre  [OK]")
 
     # =========================================================================
     # Figure  --  2 challenge maps (top) + steering + speed (bottom)
@@ -721,6 +759,13 @@ def main():
                 f'{dir_tag}  |  3 laps  |  {t_obs:.1f} s  |  {rule_note}',
                 fontsize=7.5, ha='center', color='#333')
     draw_pillars(ax_obs, all_pillars)
+    for _, lbl, px, py, min_d in missed_pillars:
+        ax_obs.add_patch(mpatches.Circle(
+            (px, py), radius=6, fill=False,
+            edgecolor='red', lw=1.5, linestyle='--', zorder=12))
+        ax_obs.text(px + 4, py + 4,
+                    f'MISS\n{min_d:.0f}cm', fontsize=5.5,
+                    color='red', fontweight='bold', zorder=13)
 
     leg_obs = [
         mpatches.Patch(color=C_SWERVE,   label='Pillar swerve (Bezier)'),
@@ -730,6 +775,7 @@ def main():
         plt.Line2D([0],[0], color=C_PARK_CAR, lw=1.5, label='Parking (car)'),
         plt.Line2D([0],[0], color='#EE2737', marker='s', ms=7, ls='', label='RED  -> pass RIGHT'),
         plt.Line2D([0],[0], color='#44D62C', marker='s', ms=7, ls='', label='GREEN -> pass LEFT'),
+        plt.Line2D([0],[0], color='red', marker='o', ms=7, ls='', mfc='none', label='PILLAR MISS (>30cm)'),
     ] + [plt.Line2D([0],[0], color=c, lw=1.5, label=n)
          for c, n in zip(LAP_COLS, LAP_NAMES)]
     ax_obs.legend(handles=leg_obs, loc='upper right', fontsize=7, framealpha=0.88)
@@ -778,9 +824,13 @@ def main():
             ax_cte.axvspan(t0, t1, color=C_BAND_SWV, alpha=0.55, zorder=0)
         elif 'Corner' in lbl:                   # 90-degree corner
             ax_cte.axvspan(t0, t1, color=C_BAND_COR, alpha=0.55, zorder=0)
-    # Lap boundary lines
-    for t_end in lap_ends:
-        ax_cte.axvline(t_end, color='#888', lw=0.8, ls=':', zorder=1)
+    # Lap boundary lines + per-lap time annotations
+    lap_starts = [0.0] + list(lap_ends[:-1])
+    for i, (t0, t1) in enumerate(zip(lap_starts, lap_ends)):
+        ax_cte.axvline(t1, color='#888', lw=0.8, ls=':', zorder=1)
+        ax_cte.text((t0 + t1) / 2, 6.8,
+                    f'L{i+1} {obs_lap_times[i]:.1f}s',
+                    fontsize=6.5, ha='center', color=LAP_COLS[i], fontweight='bold')
     # Guide lines
     for level, ls in [(0, '-'), (1, '--'), (-1, '--'), (2, ':'), (-2, ':')]:
         ax_cte.axhline(level, color='#aaaaaa' if level == 0 else '#cccccc',
