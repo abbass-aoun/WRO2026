@@ -1,5 +1,6 @@
 import cv2 as cv
 import numpy as np
+import math
 
 from config import(
     LOWER_RED_1,
@@ -21,6 +22,8 @@ from config import(
     CLOSE_PILLAR_HEIGHT,
     NAVIGATION_MIN_CONFIDENCE,
     ACTION_DISTANCE_LEVELS,
+    REAL_PILLAR_HEIGHT_MM,
+    FOCAL_LENGTH_PIXELS,
     BOUNDING_BOX_THICKNESS,
     CENTER_DOT_RADIUS
 )
@@ -207,6 +210,73 @@ def estimate_distance_level(height):
     return "medium"
 
 
+def estimate_distance_mm(pixel_height):
+    """
+    Estimates from the camera to the pillar using the pinhole camera model.
+
+    Args:
+        pixel_height: The detected height of the pillar in pixels.
+
+    Returns:
+        estimated_distance_mm: Approximate distance from camera to pillar in millimeters.
+    """
+
+    if pixel_height <= 0:
+        return None
+    
+    estimated_distance_mm = (REAL_PILLAR_HEIGHT_MM * FOCAL_LENGTH_PIXELS) / pixel_height 
+
+    return estimated_distance_mm
+
+
+def estimate_horizontal_angle(center_x, frame_width):
+    """
+    Estimates the horizontal angle of the pillar from the camera central axis.
+
+    Args:
+        center_x: The abscissa of the detected pillar.
+        frame_width: Width of the camera frame.
+
+    Returns:
+        angle_rad: Horizontal angle in radians.
+        angle_deg: Horizontal angle in degrees.
+    """
+
+    image_center_x = frame_width / 2
+    offset_x_pixels = center_x - image_center_x
+
+    angle_rad = math.atan(offset_x_pixels / FOCAL_LENGTH_PIXELS)
+    angle_deg = math.degrees(angle_rad)
+
+    return angle_rad, angle_deg
+
+
+def estimate_camera_relative_position(estimated_distance_mm, angle_rad):
+    """
+    Estimates the pillar position relative to the camera.
+
+    Camera coordinate system:
+        x = left/right offset from camera axis
+        y = forward distance from camera
+
+    Args:
+        estimated_distance_mm: Approximate distance from camera to pillar.
+        angle_rad: Horizontal angle from camera center axis.
+
+    Returns:
+        relative_x_mm: Sideways offset from camera center axis.
+        relative_y_mm: Forward distance from camera.
+    """
+
+    if estimated_distance_mm is None:
+        return None, None
+
+    relative_x_mm = estimated_distance_mm * math.sin(angle_rad)
+    relative_y_mm = estimated_distance_mm * math.cos(angle_rad)
+
+    return relative_x_mm, relative_y_mm
+
+
 def detect_pillars(mask, color_name, frame_width):
     """
     Detects pillar-like colored regions from a binary mask.
@@ -263,6 +333,10 @@ def detect_pillars(mask, color_name, frame_width):
         horizontal_position = classify_horizontal_position(center_x, frame_width)
         distance_level = estimate_distance_level(height)
 
+        estimated_distance = estimate_distance_mm(height)
+        angle_rad, angle_deg = estimate_horizontal_angle(center_x, frame_width)
+        relative_x, relative_y = estimate_camera_relative_position(estimated_distance, angle_rad)
+
         detection = {
             "color": color_name,
             "x": x,
@@ -273,6 +347,10 @@ def detect_pillars(mask, color_name, frame_width):
             "center_y": center_y,
             "horizontal_position": horizontal_position,
             "distance_level": distance_level,
+            "estimated_distance_mm": estimated_distance,
+            "angle_deg": angle_deg,
+            "relative_x_mm": relative_x,
+            "relative_y_mm": relative_y,
             "area": area,
             "aspect_ratio": aspect_ratio,
             "extent": extent,
@@ -307,8 +385,10 @@ def draw_detections(frame, detections):
         center_y = detection["center_y"]
         horizontal_position = detection["horizontal_position"]
         distance_level = detection["distance_level"]
+        estimated_distance = detection["estimated_distance_mm"]
+        angle_deg = detection["angle_deg"]
         color_name = detection["color"]
-        # area = detection["area"]
+        area = detection["area"]
         color_name = detection["color"]
         confidence = detection["confidence"]
         
@@ -332,8 +412,15 @@ def draw_detections(frame, detections):
             box_color,
             -1
         )
+        if estimated_distance is not None:
+            label = (
+                f"{color_name} {distance_level} "
+                f"d={estimated_distance / 10:.0f}cm "
+                f"a={angle_deg:.1f}deg"
+            )
 
-        label = f"{color_name} - {horizontal_position} - {distance_level} - conf = {confidence:.2f}"
+        else:
+            label = f"{color_name} {distance_level} - conf = {confidence:.2f}"
 
         cv.putText(
             output_frame,
@@ -429,6 +516,10 @@ def create_navigation_output(detections):
             "required_pass_side": None,
             "horizontal_position": None,
             "distance_level": None,
+            "estimated_distance_mm": None,
+            "angle_deg": None,
+            "relative_x_mm": None,
+            "relative_y_mm": None,
             "confidence": 0.0
         }
     
@@ -442,6 +533,10 @@ def create_navigation_output(detections):
         "required_pass_side": required_pass_side,
         "horizontal_position": primary_detection["horizontal_position"],
         "distance_level": primary_detection["distance_level"],
+        "estimated_distance_mm": primary_detection["estimated_distance_mm"],
+        "angle_deg": primary_detection["angle_deg"],
+        "relative_x_mm": primary_detection["relative_x_mm"],
+        "relative_y_mm": primary_detection["relative_y_mm"],
         "confidence": primary_detection["confidence"],
         "center_x": primary_detection["center_x"],
         "center_y": primary_detection["center_y"],

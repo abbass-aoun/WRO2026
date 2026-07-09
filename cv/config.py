@@ -79,3 +79,13 @@ NAVIGATION_MIN_CONFIDENCE = 0.55
 # For now, we will ignore far pillars and react only to medium or close pillars.
 ACTION_DISTANCE_LEVELS = ["medium", "close"]
 
+
+# Camera-relative distance and angle estimation
+
+# Official pillar height.
+REAL_PILLAR_HEIGHT_MM = 100
+
+# Temporary focal length for current camera setup.
+# This must be calibrated for the laptop webcam first,
+# then recalibrated for the Raspberry Pi camera later.
+FOCAL_LENGTH_PIXELS = 700

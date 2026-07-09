@@ -291,8 +291,6 @@ The next feature will convert detection information into navigation output. It w
 ### Purpose
 The purpose of this feature is to convert computer vision detections into a structured navigation output. Previous features detected red and green pillars and extracted information such as color, position, distance level, and confidence. This feature uses that information to produce a robot-useful output that describes whether the robot should continue normal driving or prepare to avoid a pillar.
 
-This feature does not directly control the motors. It only provides decision information that can later be used by the robot control system.
-
 ### Design Logic
 The WRO rule states that the robot must pass on the left side of a red pillar and on the right side of a green pillar. This rule is implemented as a function that converts pillar color into the required passing side.
 
@@ -324,17 +322,67 @@ Starting from the accepted detections produced in the previous feature:
 ### Testing Method
 The feature was tested using the live camera feed. When no reliable pillar-like object was visible, the output should be `continue_normal_driving`. When a reliable red object was detected at a medium or close distance, the output should recommend avoiding the pillar and passing on its left side. When a reliable green object was detected at a medium or close distance, the output should recommend avoiding the pillar and passing on its right side.
 
-Testing should include cases with no object, one red object, one green object, multiple colored objects, weak detections, and far detections.
+Testing included cases with no object, one red object, one green object. Further tesing will be conducted in the next steps.
 
 ### Result
 The vision system can now produce a structured navigation output from the detected pillars. This output connects the perception system to the future robot control system while keeping the CV module separate from motor control.
 
 ### Limitations
-This feature does not yet implement the full avoidance maneuver or decide when the robot should return to normal driving after passing a pillar. It also does not directly control steering or speed. Those behaviors should be implemented later using a state machine that considers the navigation output, robot sensors, and the current driving state.
+This feature does not yet give an accurate position of the pillar with respect to the robot, like distance and angle away from the axis of the camera.
 
 ### Next Step
-The next feature will improve mask quality and HSV tuning. This will make red and green detection more stable under different lighting conditions and with the final robot camera.
+The next feature will improve the position estimation of objects.
 
+
+## Feature 8: Camera-Relative Distance and Angle Estimation
+
+### Purpose
+The purpose of this feature is to estimate the position of a detected pillar relative to the camera. Previous features classified the pillar using simple labels such as left, center, right, far, medium, and close. This feature adds numerical estimates for distance, horizontal angle, and camera-relative position.
+
+This information is essential to plan smoother avoidance movements and understand where the pillar is located relative to the robot.
+
+### Design Logic
+The official pillar height is 100 mm. Since the real height of the pillar is known, the detected height of the pillar in pixels can be used to estimate the distance from the camera. A closer pillar appears taller in the image, while a farther pillar appears shorter.
+
+The system uses a focal length value in pixels. This value depends on the camera, lens, resolution, and image scaling. Therefore, it must be calibrated for the current camera setup. The laptop webcam focal length can be used for laptop testing, but the value must be recalibrated when switching to the Raspberry Pi camera.
+
+The horizontal angle is estimated by comparing the pillar center x-coordinate with the image center. If the pillar center is left of the image center, the angle is negative. If it is right of the image center, the angle is positive. This angle is then used with the estimated distance to calculate an approximate x and y position relative to the camera.
+
+### Algorithm Steps
+Starting from the accepted detections produced in the previous feature:
+
+1. Take each accepted pillar detection.
+2. Read the bounding box height in pixels.
+3. Use the known real pillar height and focal length in pixels to estimate the distance from the camera.
+4. Read the pillar center x-coordinate.
+5. Calculate the image center x-coordinate.
+6. Calculate the horizontal pixel offset between the pillar center and the image center.
+7. Use the pixel offset and focal length to estimate the horizontal angle from the camera axis.
+8. Convert the angle from radians to degrees for easier debugging.
+9. Use the estimated distance and angle to calculate the pillar’s approximate x-position relative to the camera.
+10. Use the estimated distance and angle to calculate the pillar’s approximate y-position relative to the camera.
+11. Store the estimated distance, angle, relative x-position, and relative y-position inside the detection dictionary.
+12. Display the distance and angle on the camera frame for testing and debugging.
+13. Include the new values in the navigation output dictionary.
+
+### Files Added or Modified
+* `config.py`: Added the official pillar height and focal length value in pixels.
+* `vision.py`: Added functions for estimating distance, horizontal angle, and camera-relative x/y position.
+* `test_vision.py`: No major structural change was required because it already displays detections and prints navigation output.
+
+### Testing Method
+The feature is tested using a pillar-like object of known height. The object is placed at a measured distance from the camera. The detected pixel height is then used to calibrate the focal length in pixels.
+
+After calibration, the object is moved closer and farther from the camera to check whether the estimated distance changes correctly. The object is also moved left and right in the frame to check whether the angle becomes negative on the left, near zero in the center, and positive on the right.
+
+### Result
+The vision system can now estimate a detected pillar’s approximate distance from the camera, horizontal angle from the camera axis, and relative x/y position. This provides more detailed spatial information than simple left, center, right, far, medium, and close labels.
+
+### Limitations
+The estimates are approximate. They depend on accurate focal length calibration, stable camera resolution, correct pillar detection, and full visibility of the pillar. If the pillar is partially hidden, tilted, detected poorly, or located near the edge of the camera image, the estimate may be less accurate.
+
+### Next Step
+The next feature will improve HSV masking and mask cleaning. This will make the detection pipeline more reliable under different lighting conditions and with the final robot camera.
 
 
 
