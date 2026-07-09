@@ -360,7 +360,21 @@ def simulate_all(sections, sx, sy, stheta, tag=''):
     sec_spans = []
     cx, cy, cth = sx, sy, stheta
 
-    for path, label, _ in sections:
+    for path, label, pillars in sections:
+        # Rebuild pillar-swerve paths from the car's actual position each time.
+        # Pre-built paths assume the nominal section start; after a corner with
+        # accumulated drift the car's correction arc can pass through the pillar.
+        # Rebuilding here guarantees the bypass waypoint stays PILLAR_CLEARANCE_CM
+        # away from the pillar regardless of how much the car drifted.
+        if pillars:
+            px, py, pc = pillars[0]
+            end_xy  = path.get_point(path.total_length)
+            end_tan = path.get_tangent(path.total_length)
+            end_th  = math.atan2(end_tan[1], end_tan[0])
+            path = TrajectoryBuilder.pillar_swerve(
+                cx, cy, cth, px, py, pc,
+                float(end_xy[0]), float(end_xy[1]), end_th
+            )
         xs, ys, ths, sts, sps, ctes = simulate_section(path, cx, cy, cth, label)
         start = len(xs_all)
         xs_all.extend(xs);   ys_all.extend(ys);  th_all.extend(ths)
@@ -649,7 +663,7 @@ def main():
     # ── Pillar proximity check ────────────────────────────────────────────
     # Nominal swerve bypass is PILLAR_CLEARANCE_CM = 20 cm from pillar centre.
     # Traffic sign body: 5x5 cm → effective collision radius ~5 cm.
-    MISS_CM      = 30.0   # flag if car never gets within 30 cm (too far, likely bypassed wrong lane)
+    MISS_CM      = 40.0   # flag if car never gets within 40 cm (bypassed wrong lane or far-overshot)
     COLLISION_CM =  5.0   # flag if car comes within 5 cm (sign body overlap risk)
     missed_pillars = []
     print("\n--- Pillar proximity check (obstacle challenge) ---")

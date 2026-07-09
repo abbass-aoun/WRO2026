@@ -351,11 +351,18 @@ def draw_panel(surf, fonts, run, sec_label, speed, steer,
     gap(2)
     text(f"  {steer:+.1f} deg  (limit +-27)", font_sm); gap(10)
 
-    # Section
+    # Section + Ackermann feedforward badge
     text("SECTION", font_sm, TXT_D); gap(3)
     name = sec_label.split('+')[0].strip()
     if len(name) > 20: name = name[-20:]
-    text(name, font_med); gap(10)
+    text(name, font_med); gap(4)
+    if 'Corner' in sec_label:
+        pygame.draw.rect(surf, (130, 45, 185),
+                         pygame.Rect(PAN_X+pad, y, bw, 18), border_radius=4)
+        ff_s = font_sm.render("  ACKERMANN FF  ON", True, WHITE)
+        surf.blit(ff_s, (PAN_X+pad+2, y+2))
+        y += 22
+    gap(6)
 
     # Race progress
     text("RACE PROGRESS", font_sm, TXT_D); gap(4)
@@ -440,6 +447,17 @@ def compute_run(ccw_secs, cw_secs, start_is_ccw, lot_x):
             secs = lap3_secs
 
         for sec_i, (path, label, pillars) in enumerate(secs):
+            # Rebuild swerve from actual car position to keep bypass clearance
+            # regardless of drift accumulated through previous corners.
+            if pillars:
+                px, py, pc = pillars[0]
+                end_xy  = path.get_point(path.total_length)
+                end_tan = path.get_tangent(path.total_length)
+                end_th  = math.atan2(end_tan[1], end_tan[0])
+                path = TrajectoryBuilder.pillar_swerve(
+                    cx, cy, cth, px, py, pc,
+                    float(end_xy[0]), float(end_xy[1]), end_th
+                )
             xs, ys, ths, sts, sps, _ = simulate_section(path, cx, cy, cth, label)
             for row in zip(xs, ys, ths, sts, sps):
                 frames.append((*row, lap * 10 + sec_i, f'L{lap+1} {label}'))
