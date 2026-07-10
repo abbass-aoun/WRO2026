@@ -89,3 +89,13 @@ REAL_PILLAR_HEIGHT_MM = 100
 # This must be calibrated for the laptop webcam first,
 # then recalibrated for the Raspberry Pi camera later.
 FOCAL_LENGTH_PIXELS = 700
+
+
+# Mask cleaning settings
+
+# Kernel size used for morphological operations.
+# Larger values clean more aggressively but may remove small valid detections.
+MORPH_KERNEL_SIZE = 3
+
+# Number of times the operation is repeated.
+MORPH_ITERATIONS = 1

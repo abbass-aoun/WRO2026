@@ -9,6 +9,8 @@ from config import(
     UPPER_RED_2,
     LOWER_GREEN,
     UPPER_GREEN,
+    MORPH_KERNEL_SIZE,
+    MORPH_ITERATIONS,
     MIN_PILLAR_AREA,
     MIN_PILLAR_WIDTH,
     MIN_PILLAR_HEIGHT,
@@ -67,6 +69,7 @@ def create_red_mask(hsv_frame):
     # combining the two masks
     red_mask = cv.bitwise_or(red_mask_1, red_mask_2)
 
+    red_mask = clean_mask(red_mask)
     return red_mask
 
 
@@ -86,7 +89,41 @@ def create_green_mask(hsv_frame):
 
     green_mask = cv.inRange(hsv_frame, lower_green, upper_green)
 
+    green_mask = clean_mask(green_mask)
     return green_mask
+
+
+def clean_mask(mask):
+    """
+    Cleans a binary mask using morphological operations.
+
+    Args:
+        mask: Binary image where target pixels are white and background pixels are black.
+
+    Returns:
+        cleaned_mask: Mask after noise removal and gap filling.
+    """
+
+    kernel = np.ones(
+        (MORPH_KERNEL_SIZE, MORPH_KERNEL_SIZE), 
+        dtype=np.uint8
+    )
+
+    opened_mask = cv.morphologyEx(
+        mask,
+        cv.MORPH_OPEN,
+        kernel,
+        iterations=MORPH_ITERATIONS,
+    )
+
+    cleaned_mask = cv.morphologyEx(
+        opened_mask,
+        cv.MORPH_CLOSE,
+        kernel,
+        iterations=MORPH_ITERATIONS,
+    )
+
+    return cleaned_mask
 
 
 def calculate_detection_confidence(area, width, height, aspect_ratio, extent):
