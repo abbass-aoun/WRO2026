@@ -29,3 +29,7 @@ VCC ----------> 3.3V (Pin 1)
 GND ----------> GND (Pin 6)
 DO  ----------> GPIO17 (Pin 11)
 AO  ----------> Leave unconnected
+
+Push Button:
+LEG 1 ----------> GPIO25 (Pin 22)
+LEG 2 ----------> GND
