@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
 """
+Don't forget to install:
+
+pip install adafruit-circuitpython-vl53l0x adafruit-blinka mpu6050-raspberrypi RPi.GPIO --break-system-packages
+
+
 Optimized Combined Sensor Script - Raspberry Pi 5
 - MPU6050: Accelerometer + Gyroscope (I2C, 0x68)
 - VL53L0X: Time-of-Flight Distance (I2C, 0x29)
