@@ -429,7 +429,7 @@ Mask cleaning improves detection quality but does not replace correct HSV tuning
 The coming features should work on the detection of the parking area in a similar way as the pillars.
 
 
-## Feature 11: Parking Marker Detection
+## Feature 10: Parking Marker Detection
 
 ### Purpose
 The purpose of this feature is to begin detecting the parking area used in the WRO Obstacle Challenge. According to the WRO 2026 rules, the parking lot is placed in the starting straight section. Its width is always 20 cm, and its length is calculated as 1.5 times the length of the robot. The parking lot is limited by two magenta elements with dimensions 20 cm × 2 cm × 10 cm.
@@ -579,7 +579,50 @@ Shadows can reduce brightness and cause parts of the marker to disappear from th
 Most importantly, due to the parking positioning, the robot's approach from a certain angle might only show one of the parker limitations, or possible merge both as one detection, this poses a challenge to approximating the exact position of the center of the parking gap, and should be taken into consideration in later stages.
 
 ### Next Step
-The next step is to continue tuning the pink HSV range until the full marker is detected under shadows, and set some more restraints for parking markers to reduce noise detections.
+The next step is to continue tuning the pink HSV range until the full marker is detected under shadows, and set some more constraints for parking markers to reduce noise detections.
+
+
+## Feature 11: HSV Tuning Tool
+
+### Purpose
+The purpose of this feature is to make HSV threshold calibration faster and easier. Previous features used fixed HSV values stored in `config.py` to detect red and green pillars. However, these values may change depending on lighting, camera type, exposure, shadows, and the actual color of the object. This feature adds a separate tuning script that allows the HSV thresholds to be adjusted live using sliders.
+
+This tool is used for calibration only. 
+
+### Design Logic
+The tuning tool opens the camera feed and converts each frame from BGR to HSV. It then applies HSV threshold values controlled by OpenCV trackbars. The original frame and the resulting binary mask are displayed side by side. By moving the sliders, the user can observe how different HSV values affect the mask in real time.
+
+The goal is to find HSV values where the target object appears white in the mask while most of the background remains black. Once good values are found, the user can press `p` to print the current HSV lower and upper limits. These values can then be copied into `config.py`.
+
+Red may require two tuning passes because red appears at both ends of OpenCV’s hue range. OpenCV hue ranges from 0 to 179, and red can appear near both 0 and 179.
+
+### Algorithm Steps
+Starting from the existing camera input system:
+
+1. Open the camera using the existing camera functions.
+2. Create a control window containing HSV sliders.
+3. Read a frame from the camera.
+4. Convert the frame from BGR to HSV.
+5. Read the current lower and upper HSV values from the sliders.
+6. Apply the HSV range to create a binary mask.
+7. Display the original camera frame.
+8. Display the HSV mask.
+9. Allow the user to adjust the sliders until the target color is isolated.
+10. Print the current HSV values when the user presses `p`.
+11. Close the tool when the user presses `q`.
+12. Copy the printed values into `config.py` if they are suitable.
+
+### Files Added or Modified
+* `tune_hsv.py`: Added a separate HSV tuning script with live sliders.
+* `README.md`: Added documentation explaining the purpose and usage of the tuning tool.
+
+### Testing Method
+The tool should be tested by placing a red or green object in front of the camera and adjusting the sliders until the object appears white in the mask. The background should remain mostly black. The printed HSV values should then be copied into `config.py` and tested in the main detection pipeline using `test_vision.py`.
+
+Testing should be repeated under different lighting conditions. Final HSV tuning should be performed using the Raspberry Pi camera and the actual WRO pillar objects.
+
+### Result
+The project now includes a reusable HSV tuning tool. This makes it easier to calibrate color thresholds for different cameras and lighting conditions without repeatedly editing the main configuration file.
 
 
 

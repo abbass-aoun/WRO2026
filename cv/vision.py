@@ -19,7 +19,7 @@ from config import(
     MIN_PARKING_MARKER_AREA,
     MIN_PARKING_MARKER_WIDTH,
     MIN_PARKING_MARKER_HEIGHT,
-    PARKING_ALIGNMENT_TOLERANCE_PX,
+    MIN_PARKING_CONFIDENCE,
     MORPH_KERNEL_SIZE,
     MORPH_ITERATIONS,
     MIN_PILLAR_AREA,
@@ -458,6 +458,8 @@ def draw_detections(frame, detections):
         horizontal_position = detection["horizontal_position"]
         distance_level = detection["distance_level"]
         estimated_distance = detection["estimated_distance_mm"]
+        relative_x = detection["relative_x_mm"]
+        relative_y = detection["relative_y_mm"]
         angle_deg = detection["angle_deg"]
         color_name = detection["color"]
         area = detection["area"]
@@ -486,9 +488,9 @@ def draw_detections(frame, detections):
         )
         if estimated_distance is not None:
             label = (
-                f"{color_name} {distance_level} "
+                f"{color_name} "
                 f"d={estimated_distance / 10:.0f}cm "
-                f"a={angle_deg:.1f}deg"
+                f"pixel_height={height}"
             )
 
         else:
@@ -664,6 +666,9 @@ def detect_parking_markers(mask, frame_width):
         )
 
         marker_confidence = min(area / 6000, 1.0)
+
+        if(marker_confidence < MIN_PARKING_CONFIDENCE):
+            continue
 
         marker = {
             "type": "parking_marker",
@@ -849,7 +854,7 @@ def draw_parking_markers(frame, parking_markers, parking_output):
         y = marker["y"]
         width = marker["width"]
         height = marker["height"]
-
+        estimated_distance = marker["estimated_distance_mm"]
         relative_x = marker["relative_x_mm"]
         relative_y = marker["relative_y_mm"]
         marker_confidence = marker["confidence"]
@@ -864,6 +869,8 @@ def draw_parking_markers(frame, parking_markers, parking_output):
 
         if relative_x is not None and relative_y is not None:
             label = (
+                f"parking"
+                f"d={estimated_distance / 10:.0f}cm "
                 f"park conf={marker_confidence:.2f} "
                 f"x={relative_x:.0f} "
                 f"y={relative_y:.0f}"

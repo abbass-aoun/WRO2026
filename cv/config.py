@@ -88,14 +88,14 @@ REAL_PILLAR_HEIGHT_MM = 100
 # Temporary focal length for current camera setup.
 # This must be calibrated for the laptop webcam first,
 # then recalibrated for the Raspberry Pi camera later.
-FOCAL_LENGTH_PIXELS = 700
+FOCAL_LENGTH_PIXELS = 635
 
 
 # Mask cleaning settings
 
 # Kernel size used for morphological operations.
 # Larger values clean more aggressively but may remove small valid detections.
-MORPH_KERNEL_SIZE = 6
+MORPH_KERNEL_SIZE = 5
 
 # Number of times the operation is repeated.
 MORPH_ITERATIONS = 1
@@ -106,8 +106,8 @@ PINK_MASK_WINDOW = "Pink Parking Mask"
 
 # HSV range for pink/magenta parking markers.
 # Starting values; tune later using tune_hsv.py.
-LOWER_MAGENTA = (160, 20, 110)
-UPPER_MAGENTA = (179, 150, 255)
+LOWER_MAGENTA = (130, 25, 100)
+UPPER_MAGENTA = (179, 80, 255)
 
 # Official parking limitation dimensions in mm:
 # 200 mm x 20 mm x 100 mm
@@ -129,5 +129,4 @@ MIN_PARKING_MARKER_AREA = 1200
 MIN_PARKING_MARKER_WIDTH = 20
 MIN_PARKING_MARKER_HEIGHT = 40
 
-# Parking alignment tolerance
-PARKING_ALIGNMENT_TOLERANCE_PX = 40
+MIN_PARKING_CONFIDENCE = 0.45
