@@ -23,8 +23,8 @@ LOWER_RED_2 = (170, 140, 80)
 UPPER_RED_2 = (179, 255, 255)
 
 # Green range
-LOWER_GREEN = (40, 70, 70)
-UPPER_GREEN = (85, 255, 255)
+LOWER_GREEN = (35, 60, 30)
+UPPER_GREEN = (90, 255, 200)
 
 
 # Minimum contour area
@@ -95,7 +95,39 @@ FOCAL_LENGTH_PIXELS = 700
 
 # Kernel size used for morphological operations.
 # Larger values clean more aggressively but may remove small valid detections.
-MORPH_KERNEL_SIZE = 3
+MORPH_KERNEL_SIZE = 6
 
 # Number of times the operation is repeated.
 MORPH_ITERATIONS = 1
+
+
+# Parking detection window
+PINK_MASK_WINDOW = "Pink Parking Mask"
+
+# HSV range for pink/magenta parking markers.
+# Starting values; tune later using tune_hsv.py.
+LOWER_MAGENTA = (160, 20, 110)
+UPPER_MAGENTA = (179, 150, 255)
+
+# Official parking limitation dimensions in mm:
+# 200 mm x 20 mm x 100 mm
+PARKING_MARKER_LENGTH_MM = 200
+PARKING_MARKER_DEPTH_MM = 20
+PARKING_MARKER_HEIGHT_MM = 100
+
+# Replace this with the actual robot length later.
+ROBOT_LENGTH_MM = 300
+
+# Parking lot length = 1.5 × robot length.
+PARKING_LOT_LENGTH_MM = int(1.5 * ROBOT_LENGTH_MM)
+
+# Parking lot width is always 200 mm.
+PARKING_LOT_WIDTH_MM = 200
+
+# Parking marker filtering
+MIN_PARKING_MARKER_AREA = 1200
+MIN_PARKING_MARKER_WIDTH = 20
+MIN_PARKING_MARKER_HEIGHT = 40
+
+# Parking alignment tolerance
+PARKING_ALIGNMENT_TOLERANCE_PX = 40

@@ -9,6 +9,17 @@ from config import(
     UPPER_RED_2,
     LOWER_GREEN,
     UPPER_GREEN,
+    LOWER_MAGENTA,
+    UPPER_MAGENTA,
+    PARKING_MARKER_LENGTH_MM,
+    PARKING_MARKER_DEPTH_MM,
+    PARKING_MARKER_HEIGHT_MM,
+    PARKING_LOT_LENGTH_MM,
+    PARKING_LOT_WIDTH_MM,
+    MIN_PARKING_MARKER_AREA,
+    MIN_PARKING_MARKER_WIDTH,
+    MIN_PARKING_MARKER_HEIGHT,
+    PARKING_ALIGNMENT_TOLERANCE_PX,
     MORPH_KERNEL_SIZE,
     MORPH_ITERATIONS,
     MIN_PILLAR_AREA,
@@ -91,6 +102,26 @@ def create_green_mask(hsv_frame):
 
     green_mask = clean_mask(green_mask)
     return green_mask
+
+
+def create_pink_mask(hsv_frame):
+    """
+    Creates a cleaned binary mask for magenta parking markers.
+
+    Args:
+        hsv_frame: The camera frame converted to HSV.
+
+    Returns:
+        pink_mask: A cleaned binary image where pink/magenta pixels are white.
+    """
+
+    lower_pink = np.array(LOWER_MAGENTA, dtype=np.uint8)
+    upper_pink = np.array(UPPER_MAGENTA, dtype=np.uint8)
+
+    magenta_mask = cv.inRange(hsv_frame, lower_pink, upper_pink)
+
+    magenta_mask = clean_mask(magenta_mask)
+    return magenta_mask
 
 
 def clean_mask(mask):
@@ -247,28 +278,32 @@ def estimate_distance_level(height):
     return "medium"
 
 
-def estimate_distance_mm(pixel_height):
+def estimate_object_distance_mm(pixel_height, real_height_mm):
     """
-    Estimates from the camera to the pillar using the pinhole camera model.
+    Estimates distance from the camera to an object using its real height
+    and detected pixel height (using pinhole camera model).
 
     Args:
-        pixel_height: The detected height of the pillar in pixels.
+        pixel_height: Detected object height in pixels.
+        real_height_mm: Real object height in millimeters.
 
     Returns:
-        estimated_distance_mm: Approximate distance from camera to pillar in millimeters.
+        estimated_distance_mm: Approximate distance from camera to object in millimeters.
     """
 
     if pixel_height <= 0:
         return None
-    
-    estimated_distance_mm = (REAL_PILLAR_HEIGHT_MM * FOCAL_LENGTH_PIXELS) / pixel_height 
+
+    estimated_distance_mm = (
+        real_height_mm * FOCAL_LENGTH_PIXELS
+    ) / pixel_height
 
     return estimated_distance_mm
 
 
 def estimate_horizontal_angle(center_x, frame_width):
     """
-    Estimates the horizontal angle of the pillar from the camera central axis.
+    Estimates the horizontal angle of the object from the camera central axis.
 
     Args:
         center_x: The abscissa of the detected pillar.
@@ -290,7 +325,7 @@ def estimate_horizontal_angle(center_x, frame_width):
 
 def estimate_camera_relative_position(estimated_distance_mm, angle_rad):
     """
-    Estimates the pillar position relative to the camera.
+    Estimates object position relative to the camera.
 
     Camera coordinate system:
         x = left/right offset from camera axis
@@ -370,7 +405,7 @@ def detect_pillars(mask, color_name, frame_width):
         horizontal_position = classify_horizontal_position(center_x, frame_width)
         distance_level = estimate_distance_level(height)
 
-        estimated_distance = estimate_distance_mm(height)
+        estimated_distance = estimate_object_distance_mm(height, REAL_PILLAR_HEIGHT_MM)
         angle_rad, angle_deg = estimate_horizontal_angle(center_x, frame_width)
         relative_x, relative_y = estimate_camera_relative_position(estimated_distance, angle_rad)
 
@@ -581,3 +616,269 @@ def create_navigation_output(detections):
     }
 
     return navigation_output
+
+
+def detect_parking_markers(mask, frame_width):
+    """
+    Detects magenta parking limitation markers from a binary mask.
+
+    Args:
+        mask: Binary image where parking marker pixels are white.
+        frame_width: Width of the original camera frame.
+
+    Returns:
+        parking_markers: List of detected parking marker dictionaries.
+    """
+
+    contours, _ = cv.findContours(mask, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
+
+    parking_markers = []
+
+    for contour in contours:
+        area = cv.contourArea(contour)
+
+        if area < MIN_PARKING_MARKER_AREA:
+            continue
+
+        x, y, width, height = cv.boundingRect(contour)
+
+        if width < MIN_PARKING_MARKER_WIDTH:
+            continue
+
+        if height < MIN_PARKING_MARKER_HEIGHT:
+            continue
+
+        center_x = x + width // 2
+        center_y = y + height // 2
+
+        estimated_distance = estimate_object_distance_mm(
+            height,
+            PARKING_MARKER_HEIGHT_MM,
+        )
+
+        angle_rad, angle_deg = estimate_horizontal_angle(center_x, frame_width)
+
+        relative_x, relative_y = estimate_camera_relative_position(
+            estimated_distance,
+            angle_rad,
+        )
+
+        marker_confidence = min(area / 6000, 1.0)
+
+        marker = {
+            "type": "parking_marker",
+            "x": x,
+            "y": y,
+            "width": width,
+            "height": height,
+            "center_x": center_x,
+            "center_y": center_y,
+            "area": area,
+            "estimated_distance_mm": estimated_distance,
+            "angle_deg": angle_deg,
+            "relative_x_mm": relative_x,
+            "relative_y_mm": relative_y,
+            "confidence": marker_confidence
+        }
+
+        parking_markers.append(marker)
+
+    parking_markers.sort(key=lambda marker: marker["area"], reverse=True)
+
+    return parking_markers
+
+
+def create_parking_output(parking_markers):
+    """
+    Creates parking output from detected parking markers.
+
+    Cases:
+        0 markers:
+            Parking is not detected.
+
+        1 marker:
+            Parking is partially detected.
+            The visible marker is stored as marker_1.
+
+        2 or more markers:
+            Full parking slot is detected.
+            The two best markers are stored as marker_1 and marker_2.
+
+    Args:
+        parking_markers: List of detected parking marker dictionaries.
+
+    Returns:
+        parking_output: Dictionary describing the detected parking markers and slot.
+    """
+
+    if len(parking_markers) == 0:
+        return {
+            "parking_detected": False,
+            "parking_status": "not_detected",
+            "reason": "no_markers_detected",
+            "marker_count": 0,
+
+            "marker_1": None,
+            "marker_2": None,
+
+            "marker_1_relative_x_mm": None,
+            "marker_1_relative_y_mm": None,
+            "marker_2_relative_x_mm": None,
+            "marker_2_relative_y_mm": None,
+
+            "slot_center_relative_x_mm": None,
+            "slot_center_relative_y_mm": None,
+            "slot_distance_mm": None,
+            "slot_angle_deg": None,
+
+            "parking_lot_length_mm": PARKING_LOT_LENGTH_MM,
+            "parking_lot_width_mm": PARKING_LOT_WIDTH_MM,
+        }
+
+    if len(parking_markers) == 1:
+        marker_1 = parking_markers[0]
+        marker_2 = None
+
+        marker_1_x = marker_1["relative_x_mm"]
+        marker_1_y = marker_1["relative_y_mm"]
+
+        if marker_1_x is not None and marker_1_y is not None:
+            slot_center_x = marker_1_x
+            slot_center_y = marker_1_y + (PARKING_LOT_LENGTH_MM / 2)
+
+            slot_distance_mm = math.sqrt(
+                slot_center_x ** 2
+                + slot_center_y ** 2
+            )
+
+            slot_angle_rad = math.atan2(slot_center_x, slot_center_y)
+            slot_angle_deg = math.degrees(slot_angle_rad)
+        else:
+            slot_center_x = None
+            slot_center_y = None
+            slot_distance_mm = None
+            slot_angle_deg = None
+
+        return {
+            "parking_detected": True,
+            "parking_status": "partial_slot_detected",
+            "reason": "one_marker_detected",
+            "marker_count": 1,
+
+            "marker_1": marker_1,
+            "marker_2": marker_2,
+
+            "marker_1_relative_x_mm": marker_1_x,
+            "marker_1_relative_y_mm": marker_1_y,
+            "marker_2_relative_x_mm": None,
+            "marker_2_relative_y_mm": None,
+
+            "slot_center_relative_x_mm": slot_center_x,
+            "slot_center_relative_y_mm": slot_center_y,
+            "slot_distance_mm": slot_distance_mm,
+            "slot_angle_deg": slot_angle_deg,
+
+            "parking_lot_length_mm": PARKING_LOT_LENGTH_MM,
+            "parking_lot_width_mm": PARKING_LOT_WIDTH_MM,
+        }
+
+    marker_1 = parking_markers[0]
+    marker_2 = parking_markers[1]
+
+    marker_1_x = marker_1["relative_x_mm"]
+    marker_1_y = marker_1["relative_y_mm"]
+    marker_2_x = marker_2["relative_x_mm"]
+    marker_2_y = marker_2["relative_y_mm"]
+
+    if (
+        marker_1_x is not None
+        and marker_1_y is not None
+        and marker_2_x is not None
+        and marker_2_y is not None
+    ):
+        slot_center_x = (marker_1_x + marker_2_x) / 2
+        slot_center_y = (marker_1_y + marker_2_y) / 2
+
+        slot_distance_mm = math.sqrt(
+            slot_center_x ** 2
+            + slot_center_y ** 2
+        )
+
+        slot_angle_rad = math.atan2(slot_center_x, slot_center_y)
+        slot_angle_deg = math.degrees(slot_angle_rad)
+    else:
+        slot_center_x = None
+        slot_center_y = None
+        slot_distance_mm = None
+        slot_angle_deg = None
+
+    return {
+        "parking_detected": True,
+        "parking_status": "full_slot_detected",
+        "reason": "two_markers_detected",
+        "marker_count": len(parking_markers),
+
+        "marker_1": marker_1,
+        "marker_2": marker_2,
+
+        "marker_1_relative_x_mm": marker_1_x,
+        "marker_1_relative_y_mm": marker_1_y,
+        "marker_2_relative_x_mm": marker_2_x,
+        "marker_2_relative_y_mm": marker_2_y,
+
+        "slot_center_relative_x_mm": slot_center_x,
+        "slot_center_relative_y_mm": slot_center_y,
+        "slot_distance_mm": slot_distance_mm,
+        "slot_angle_deg": slot_angle_deg,
+
+        "parking_lot_length_mm": PARKING_LOT_LENGTH_MM,
+        "parking_lot_width_mm": PARKING_LOT_WIDTH_MM,
+    }
+
+
+def draw_parking_markers(frame, parking_markers, parking_output):
+    """
+    Draws every detected parking marker.
+    If a slot center is available, it can also draw slot information.
+    """
+
+    output_frame = frame.copy()
+
+    for marker in parking_markers:
+        x = marker["x"]
+        y = marker["y"]
+        width = marker["width"]
+        height = marker["height"]
+
+        relative_x = marker["relative_x_mm"]
+        relative_y = marker["relative_y_mm"]
+        marker_confidence = marker["confidence"]
+
+        cv.rectangle(
+            output_frame,
+            (x, y),
+            (x + width, y + height),
+            (255, 0, 255),
+            BOUNDING_BOX_THICKNESS,
+        )
+
+        if relative_x is not None and relative_y is not None:
+            label = (
+                f"park conf={marker_confidence:.2f} "
+                f"x={relative_x:.0f} "
+                f"y={relative_y:.0f}"
+            )
+        else:
+            label = f"park conf={marker_confidence:.2f}"
+
+        cv.putText(
+            output_frame,
+            label,
+            (x, max(y - 10, 20)),
+            cv.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            (255, 0, 255),
+            1,
+        )
+
+    return output_frame

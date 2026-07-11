@@ -385,6 +385,202 @@ The estimates are approximate. They depend on accurate focal length calibration,
 The next feature will improve HSV masking and mask cleaning. This will make the detection pipeline more reliable under different lighting conditions and with the final robot camera.
 
 
+## Feature 9: Mask Cleaning and Morphology
+
+### Purpose
+The purpose of this feature is to improve the quality of the red and green binary masks before contour detection. Previous features used HSV thresholds to isolate red and green regions, but the resulting masks could still contain small noise, holes, rough edges, or broken regions. These issues can reduce the reliability of contour detection.
+
+This feature cleans the masks so the detected pillar regions become more stable and easier to process.
+
+### Design Logic
+The vision system uses binary masks where the target color appears white and the background appears black. Contour detection depends strongly on the quality of these masks. If the mask contains many small white noise regions, OpenCV may detect false contours. If the real pillar mask contains holes or gaps, the pillar may be detected as a weaker or fragmented object.
+
+To improve this, morphological operations are applied to the masks. Opening (erosion) is used first to remove small white noise. Closing (dilation) is then used to fill small holes and connect small gaps in the detected object. This produces a cleaner mask before contour detection.
+
+The kernel size and number of iterations are stored in `config.py` so they can be tuned during testing. A larger kernel cleans more aggressively, but may remove or distort small valid detections. A smaller kernel preserves more detail, but may remove less noise.
+
+### Algorithm Steps
+Starting from the red and green masks created by HSV thresholding:
+
+1. Create a square morphology kernel using the configured kernel size.
+2. Apply morphological opening to the mask to remove small white noise.
+3. Apply morphological closing to the opened mask to fill small holes and connect small gaps.
+4. Return the cleaned mask.
+5. Use the cleaned mask as the input to contour detection.
+6. Display the cleaned red and green masks for testing and debugging.
+
+### Files Added or Modified
+* `config.py`: Added mask cleaning settings for kernel size and iteration count.
+* `vision.py`: Added a mask cleaning function and applied it to the red and green masks.
+* `test_vision.py`: No structural change was required because the existing mask display now shows the cleaned masks.
+
+### Testing Method
+The feature was tested using the live camera feed and the red and green mask windows. The masks were checked before contour detection to confirm that small noise was reduced and pillar regions appeared more solid. Testing should be repeated under different lighting conditions and with the target object at different distances.
+
+If valid object regions are removed, the kernel size or iteration count should be reduced. If noise remains, the kernel size or iteration count can be increased carefully.
+
+### Result
+The vision system now produces cleaner red and green masks before contour detection. This improves the stability of detected contours and reduces the chance of reacting to small noisy regions.
+
+### Limitations
+Mask cleaning improves detection quality but does not replace correct HSV tuning. If the HSV thresholds are too broad or too narrow, morphology alone cannot fully fix false detections or missed detections. The kernel size and iteration count may also need to be adjusted when using the final Raspberry Pi camera and competition lighting.
+
+### Next Step
+The coming features should work on the detection of the parking area in a similar way as the pillars.
+
+
+## Feature 11: Parking Marker Detection
+
+### Purpose
+The purpose of this feature is to begin detecting the parking area used in the WRO Obstacle Challenge. According to the WRO 2026 rules, the parking lot is placed in the starting straight section. Its width is always 20 cm, and its length is calculated as 1.5 times the length of the robot. The parking lot is limited by two magenta elements with dimensions 20 cm × 2 cm × 10 cm.
+
+This feature detects the pink or magenta parking limitation markers using a similar pipeline to that used in detecting green and red pillars. During early testing, a pastel pink object is used instead of the official magenta marker, so the HSV range is tuned for the current test object and will need to be recalibrated later using the final competition objects.
+
+### Design Logic
+Parking detection is handled as a separate subsystem from pillar detection because parking markers serve a different purpose. Red and green pillars are used for obstacle avoidance, while the pink or magenta parking markers are used to locate the parking slot.
+
+The system creates a separate pink mask from the HSV image. The mask is cleaned using the existing morphology-based mask cleaning function. Contours are then extracted from the cleaned mask, and small detections are ignored using minimum area, width, and height thresholds.
+
+Each accepted parking marker is stored as a dictionary containing its bounding box, center point, contour area, estimated distance, camera-relative x/y position, angle, and marker confidence.
+
+The coordinate system used by the vision system is:
+
+```text id="b3k6wo"
+relative_x_mm = left/right position relative to the camera
+relative_y_mm = forward position relative to the camera
+```
+
+A negative `relative_x_mm` means the marker is to the left of the camera axis. A positive `relative_x_mm` means it is to the right. The `relative_y_mm` value represents the approximate forward distance from the camera.
+
+### Parking Output Logic
+The output distinguishes between three cases:
+
+```text id="78vjki"
+0 markers detected  → parking is not detected
+1 marker detected   → parking is partially detected
+2 markers detected  → full parking slot is detected
+```
+
+If no marker is detected, the system returns `parking_detected = False`.
+
+If one marker is detected, the system returns `parking_detected = True` with `parking_status = "partial_slot_detected"`. The single visible marker is stored as `marker_1`. This gives the robot useful partial information about the parking slot space.
+
+If two or more markers are detected, the two best markers are selected and stored as `marker_1` and `marker_2`. The slot center is then estimated from the midpoint between their camera-relative x/y coordinates.
+
+### Algorithm Steps
+Starting from the existing camera frame and HSV conversion:
+
+1. Create a pink/magenta mask using the configured HSV range.
+2. Clean the mask using morphology.
+3. Find external contours in the pink mask.
+4. Ignore contours whose area is below the minimum parking marker area.
+5. Ignore contours whose bounding box width or height is too small.
+6. For each remaining contour, calculate the bounding box.
+7. Calculate the center point of the marker in image pixels.
+8. Estimate the marker distance using the known marker height of 100 mm.
+9. Estimate the marker horizontal angle using the marker center and camera focal length.
+10. Estimate the marker camera-relative x/y position.
+11. Calculate a marker-level confidence score based on contour area.
+12. Store the marker data in a dictionary.
+13. Sort detected parking markers by confidence and area.
+14. Create a parking output dictionary based on how many markers were detected.
+15. If one marker is detected, store it as `marker_1` and return partial parking detection.
+16. If two or more markers are detected, store the two best markers as `marker_1` and `marker_2`.
+17. If two markers are available, estimate the slot center as the midpoint between their relative x/y positions.
+18. Draw every detected parking marker on the output frame.
+19. Display each marker’s confidence and relative x/y position on the frame.
+
+### Marker Detection Output
+Each detected parking marker stores:
+
+```python id="blljgq"
+{
+    "type": "parking_marker",
+    "x": x,
+    "y": y,
+    "width": width,
+    "height": height,
+    "center_x": center_x,
+    "center_y": center_y,
+    "area": area,
+    "estimated_distance_mm": estimated_distance,
+    "angle_deg": angle_deg,
+    "relative_x_mm": relative_x,
+    "relative_y_mm": relative_y,
+    "confidence": marker_confidence,
+}
+```
+
+The marker confidence is currently calculated as:
+
+```python id="vuqpsb"
+marker_confidence = min(area / 6000, 1.0)
+```
+
+This is a simple heuristic. Larger valid pink/magenta regions are considered more reliable up to a maximum confidence of 1.0. This is not a machine learning confidence score; it is only a rule-based score used for debugging and marker prioritization.
+
+### Parking Output
+If no marker is detected:
+
+```python id="b1vi1x"
+{
+    "parking_detected": False,
+    "parking_status": "not_detected",
+    "reason": "no_markers_detected",
+    "marker_count": 0,
+    "marker_1": None,
+    "marker_2": None,
+}
+```
+
+If one marker is detected:
+
+```python id="4w38m9"
+{
+    "parking_detected": True,
+    "parking_status": "partial_slot_detected",
+    "reason": "one_marker_detected",
+    "marker_count": 1,
+    "marker_1": marker_1,
+    "marker_2": None,
+}
+```
+
+If two or more markers are detected:
+
+```python id="3srxoz"
+{
+    "parking_detected": True,
+    "parking_status": "full_slot_detected",
+    "reason": "two_markers_detected",
+    "marker_count": len(parking_markers),
+    "marker_1": marker_1,
+    "marker_2": marker_2,
+    "slot_center_relative_x_mm": slot_center_x,
+    "slot_center_relative_y_mm": slot_center_y,
+    "slot_distance_mm": slot_distance_mm,
+    "slot_angle_deg": slot_angle_deg
+}
+```
+
+### Testing Method
+The first test is to display the pink mask. The pastel pink marker should appear white in the mask, while the red and green pillars should remain mostly black.
+
+The second test is to check the output frame. Every detected parking marker should be outlined with a magenta bounding box. The label should include the marker confidence and its relative x/y position.
+
+The third test is to check the terminal output. When one marker is detected, the system should report `partial_slot_detected`. When two markers are detected, it should report `full_slot_detected`.
+
+### Result
+The vision system can now detect pink or magenta parking limitation markers separately from red and green pillars. Each parking marker has its own confidence score and camera-relative x/y position. The parking output can distinguish between no marker, partial marker detection, and full two-marker slot detection without making left/right assumptions.
+
+### Limitations
+Shadows can reduce brightness and cause parts of the marker to disappear from the mask. The confidence score is a simple area-based heuristic and does not guarantee that the detected object is a correct parking marker. 
+
+Most importantly, due to the parking positioning, the robot's approach from a certain angle might only show one of the parker limitations, or possible merge both as one detection, this poses a challenge to approximating the exact position of the center of the parking gap, and should be taken into consideration in later stages.
+
+### Next Step
+The next step is to continue tuning the pink HSV range until the full marker is detected under shadows, and set some more restraints for parking markers to reduce noise detections.
+
 
 
 
