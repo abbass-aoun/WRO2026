@@ -19,8 +19,8 @@ WHAT HAPPENS EACH TICK (every 20 ms at 50 Hz):
     8. Sleep until the next tick
 
 PARTNER INTEGRATION:
-    The only thing your vision partner needs to do is fill get_vision_frame().
-    See that function below — it returns a VisionFrame every tick.
+    Partner fills in vision/vision_interface.py — three detect_*() methods.
+    Nothing else needs to be touched.
 
 TUNING GUIDE (competition day):
     All robot-specific numbers are in config.py.
@@ -46,14 +46,13 @@ from config import (
 
 import numpy as np
 
-from control.robot              import Robot
-from control.car_controller     import CarController
-from control.allEncodersClass   import RobotEncoders
+from control.robot               import Robot
+from control.car_controller      import CarController
+from control.allEncodersClass    import RobotEncoders
 from control.steering_controller import SteeringPIDController
 from control.driving_controller  import DrivingPIDController
-from estimation.ekf             import EKF
-from main.race_manager          import RaceManager, Direction, VisionFrame
-from trajectory.builder         import RED, GREEN
+from estimation.ekf              import EKF
+from main.race_manager           import RaceManager, Direction, VisionFrame
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Hardware pin numbers                              TUNE ON REAL ROBOT
@@ -80,42 +79,6 @@ DUTY_GAIN  = 0.008  # TUNE ON REAL ROBOT
 # EKF noise matrices                                TUNE ON REAL ROBOT
 # ─────────────────────────────────────────────────────────────────────────────
 _Q = np.diag([EKF_Q_XY_CM2, EKF_Q_XY_CM2, EKF_Q_THETA_R2])
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Vision interface  —  partner fills this function
-# ─────────────────────────────────────────────────────────────────────────────
-
-def get_vision_frame() -> VisionFrame:
-    """
-    Called every tick.  Returns what the camera currently sees.
-
-    YOUR PARTNER replaces the body of this function with their code.
-    The return value must be a VisionFrame with these fields:
-
-        pillars          : list of (x_cm, y_cm, color)
-                           color = RED (0) → pass right
-                           color = GREEN (1) → pass left
-                           sorted closest-first.
-
-        orange_line_seen : True if the camera sees the orange start line.
-        blue_line_seen   : True if the camera sees a blue section line.
-        parking_lot      : (x_cm, y_cm, theta_rad) of the lot entry, or None.
-
-    Example — partner puts their vision system here:
-        from vision_system import Vision
-        _vision = Vision()
-
-        def get_vision_frame() -> VisionFrame:
-            _vision.detect()
-            return VisionFrame(
-                pillars          = _vision.pillars_cm,
-                orange_line_seen = _vision.orange_seen,
-                blue_line_seen   = _vision.blue_seen,
-                parking_lot      = _vision.parking_lot_cm,
-            )
-    """
-    return VisionFrame()   # MOCK — partner replaces this
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -199,13 +162,13 @@ def main() -> None:
             robot.update_speed(speed_meas)
 
             # ── VISION (from partner) ─────────────────────────────────────────
-            vision = get_vision_frame()
+            vision_frame = VisionFrame()   # MOCK — partner replaces this
 
             # ── RACE LOGIC ────────────────────────────────────────────────────
-            trajectory = race.update(robot, vision)
+            trajectory = race.update(robot, vision_frame)
             if trajectory is None:
-                # Still waiting for direction detection — coast straight
-                car.set_motor('f', BASE_DUTY * 0.6)
+                # Waiting for direction detection — coast slowly
+                car.set_motor('f', BASE_DUTY * 0.5)
                 _sleep_rest(t_start, DT_S)
                 tick += 1
                 continue
