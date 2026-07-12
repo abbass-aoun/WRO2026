@@ -1,7 +1,7 @@
 from gpiozero import PWMOutputDevice, DigitalOutputDevice
 from time import time, sleep
-from servoClass import myServo
-from allEncodersClass import RobotEncoders
+from control.servoClass import myServo
+from control.allEncodersClass import RobotEncoders
 from control.brake_controller import BrakePIDController
 
 
