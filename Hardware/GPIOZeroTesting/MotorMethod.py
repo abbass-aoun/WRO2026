@@ -3,8 +3,9 @@ from gpiozero import Motor
  
  
 class MotorController:
-    def __init__(self, forward_pin, backward_pin):
-        self._motor = Motor(forward=forward_pin, backward=backward_pin)
+    def __init__(self, forward_pin, backward_pin, enable_pin):
+        # enable_pin carries the PWM signal for speed (L298N's ENA pin)
+        self._motor = Motor(forward=forward_pin, backward=backward_pin, enable=enable_pin)
  
     def drive(self, speed: float, direction: int):
         """
@@ -29,7 +30,7 @@ class MotorController:
  
 def main():
     # Change these to match your wiring
-    motor = MotorController(forward_pin=17, backward_pin=18)
+    motor = MotorController(forward_pin=18, backward_pin=13, enable_pin=19)
  
     try:
         print("Forward at 50% speed")
@@ -48,4 +49,3 @@ def main():
  
 if __name__ == "__main__":
     main()
- 
