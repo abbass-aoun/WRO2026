@@ -6,7 +6,7 @@
 - 2 rear LED
 - 4 resistors for the LEDs
 - push button with pull down resistor
-- resistor for I2c pull up
+- resistor for I2c pull up (4.7/1 kohm)
 - Capacitors for smoothing
 - RasPI connector
 - IMU 
