@@ -1,0 +1,20 @@
+ #--- GPIO backend for Raspberry Pi 5 (RP1 chip) ---
+gpiozero
+lgpio
+ 
+# --- I2C accelerometer/gyroscope ---
+smbus2
+mpu6050-raspberrypi
+ 
+# --- ToF ---
+adafruit-blinka
+adafruit-circuitpython-vl53l0x
+ 
+# --- Motors/ Servos/ Color Sensor  ---
+# no extra library needed beyond gpiozero above
+ 
+# --- Encoders ---
+# no extra library needed beyond gpiozero above
+# NOTE: avoid the "pigpio" pin factory on Pi 5 - pigpio does not support
+# the RP1 chip. Stick with gpiozero's default lgpio backend (installed above).
+ 
