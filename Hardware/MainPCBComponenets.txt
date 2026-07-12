@@ -1,0 +1,12 @@
+- connector from the first PCB
+- Servo 1PWM
+- Motor drive 2 Digital 1PWM
+- Encoders 2 Digital pins
+- rear tof, I2c connection
+- 2 rear LED
+- 4 resistors for the LEDs
+- push button with pull down resistor
+- resistor for I2c pull up
+- Capacitors for smoothing
+- RasPI connector
+- IMU 
