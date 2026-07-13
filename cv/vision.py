@@ -4,6 +4,7 @@ import math
 
 from config import(
     LOWER_RED_1,
+    MIN_WALL_SLICE_DENSITY,
     UPPER_RED_1,
     LOWER_RED_2,
     UPPER_RED_2,
@@ -38,7 +39,17 @@ from config import(
     REAL_PILLAR_HEIGHT_MM,
     FOCAL_LENGTH_PIXELS,
     BOUNDING_BOX_THICKNESS,
-    CENTER_DOT_RADIUS
+    CENTER_DOT_RADIUS,
+    LOWER_BLACK,
+    UPPER_BLACK,
+    REAL_WALL_HEIGHT_MM,
+    WALL_ROI_START_RATIO,
+    WALL_SLICE_WIDTH_PX,
+    MIN_WALL_SLICE_PIXELS,
+    MIN_WALL_SLICE_HEIGHT_PX,
+    LEFT_WALL_ZONE_RATIO,
+    RIGHT_WALL_ZONE_RATIO,
+    MIN_WALL_CONFIDENCE,
 )
 
 
@@ -122,6 +133,20 @@ def create_pink_mask(hsv_frame):
 
     magenta_mask = clean_mask(magenta_mask)
     return magenta_mask
+
+
+def create_black_wall_mask(hsv_frame):
+    """
+    Creates a cleaned binary mask for black walls.
+    """
+
+    lower_black = np.array(LOWER_BLACK, dtype=np.uint8)
+    upper_black = np.array(UPPER_BLACK, dtype=np.uint8)
+
+    black_mask = cv.inRange(hsv_frame, lower_black, upper_black)
+    black_mask = clean_mask(black_mask)
+
+    return black_mask
 
 
 def clean_mask(mask):
@@ -841,7 +866,7 @@ def create_parking_output(parking_markers):
     }
 
 
-def draw_parking_markers(frame, parking_markers, parking_output):
+def draw_parking_markers(frame, parking_markers):
     """
     Draws every detected parking marker.
     If a slot center is available, it can also draw slot information.
@@ -886,6 +911,301 @@ def draw_parking_markers(frame, parking_markers, parking_output):
             0.5,
             (255, 0, 255),
             1,
+        )
+
+    return output_frame
+
+
+def classify_wall_side(slice_center_x, frame_width):
+    """
+    Classifies where the wall slice appears in the image.
+    """
+
+    left_boundary = int(frame_width * LEFT_WALL_ZONE_RATIO)
+    right_boundary = int(frame_width * RIGHT_WALL_ZONE_RATIO)
+
+    if slice_center_x < left_boundary:
+        return "left"
+
+    if slice_center_x > right_boundary:
+        return "right"
+
+    return "front"
+
+
+def detect_wall_slices(black_mask, frame_width, frame_height):
+    """
+    Detects black wall slices and estimates their distance.
+
+    The wall is not treated as one object because it can extend across
+    the whole frame or appear on the side and front at the same time.
+
+    Args:
+        black_mask: Binary mask for black wall pixels.
+        frame_width: Width of the camera frame.
+        frame_height: Height of the camera frame.
+
+    Returns:
+        wall_slices: List of detected wall slice dictionaries.
+    """
+
+    roi_start_y = int(frame_height * WALL_ROI_START_RATIO)
+
+    roi_mask = black_mask.copy()
+    roi_mask[:roi_start_y, :] = 0
+
+    wall_slices = []
+
+    for x_start in range(0, frame_width, WALL_SLICE_WIDTH_PX):
+        x_end = min(x_start + WALL_SLICE_WIDTH_PX, frame_width)
+
+        slice_mask = roi_mask[:, x_start:x_end]
+
+        black_pixels = cv.countNonZero(slice_mask)
+
+        slice_area = slice_mask.shape[0] * slice_mask.shape[1]
+        black_density = black_pixels / slice_area
+
+        if black_density < MIN_WALL_SLICE_DENSITY:
+            continue
+
+        if black_pixels < MIN_WALL_SLICE_PIXELS:
+            continue
+
+        ys, xs = np.where(slice_mask > 0)
+
+        if len(ys) == 0:
+            continue
+
+        y_min = int(np.min(ys))
+        y_max = int(np.max(ys))
+
+        wall_pixel_height = y_max - y_min + 1
+
+        if wall_pixel_height < MIN_WALL_SLICE_HEIGHT_PX:
+            continue
+
+        slice_center_x = x_start + (x_end - x_start) // 2
+        slice_center_y = (y_min + y_max) // 2
+
+        estimated_distance = estimate_object_distance_mm(
+            wall_pixel_height,
+            REAL_WALL_HEIGHT_MM,
+        )
+
+        angle_rad, angle_deg = estimate_horizontal_angle(
+            slice_center_x,
+            frame_width,
+        )
+
+        relative_x, relative_y = estimate_camera_relative_position(
+            estimated_distance,
+            angle_rad,
+        )
+
+        wall_side = classify_wall_side(slice_center_x, frame_width)
+
+        confidence = min(wall_pixel_height / 100, 1.0)
+
+        if confidence < MIN_WALL_CONFIDENCE:
+            continue
+
+        wall_slice = {
+            "type": "wall_slice",
+
+            "wall_side": wall_side,
+
+            "x_start": x_start,
+            "x_end": x_end,
+            "slice_center_x": slice_center_x,
+            "slice_center_y": slice_center_y,
+
+            "y_min": y_min,
+            "y_max": y_max,
+
+            "black_pixels": black_pixels,
+            "wall_pixel_height": wall_pixel_height,
+
+            "estimated_distance_mm": estimated_distance,
+            "angle_deg": angle_deg,
+            "relative_x_mm": relative_x,
+            "relative_y_mm": relative_y,
+
+            "confidence": confidence,
+        }
+
+        wall_slices.append(wall_slice)
+
+    return wall_slices
+
+
+def create_wall_output(wall_slices):
+    """
+    Creates a summarized wall output from detected wall slices.
+
+    Returns the nearest left, front, and right wall if they appear.
+    """
+
+    left_wall_slices = []
+    front_wall_slices = []
+    right_wall_slices = []
+
+    for wall_slice in wall_slices:
+        if wall_slice["wall_side"] == "left":
+            left_wall_slices.append(wall_slice)
+        elif wall_slice["wall_side"] == "front":
+            front_wall_slices.append(wall_slice)
+        elif wall_slice["wall_side"] == "right":
+            right_wall_slices.append(wall_slice)
+
+    if left_wall_slices:
+        nearest_left_wall = min(
+            left_wall_slices,
+            key=lambda wall_slice: wall_slice["estimated_distance_mm"],
+        )
+    else:
+        nearest_left_wall = None
+
+    if front_wall_slices:
+        nearest_front_wall = min(
+            front_wall_slices,
+            key=lambda wall_slice: wall_slice["estimated_distance_mm"],
+        )
+    else:
+        nearest_front_wall = None
+
+    if right_wall_slices:
+        nearest_right_wall = min(
+            right_wall_slices,
+            key=lambda wall_slice: wall_slice["estimated_distance_mm"],
+        )
+    else:
+        nearest_right_wall = None
+
+    return {
+        "left_wall_detected": nearest_left_wall is not None,
+        "front_wall_detected": nearest_front_wall is not None,
+        "right_wall_detected": nearest_right_wall is not None,
+
+        "nearest_left_wall": nearest_left_wall,
+        "nearest_front_wall": nearest_front_wall,
+        "nearest_right_wall": nearest_right_wall,
+
+        "left_wall_distance_mm": (
+            nearest_left_wall["estimated_distance_mm"]
+            if nearest_left_wall is not None
+            else None
+        ),
+        "front_wall_distance_mm": (
+            nearest_front_wall["estimated_distance_mm"]
+            if nearest_front_wall is not None
+            else None
+        ),
+        "right_wall_distance_mm": (
+            nearest_right_wall["estimated_distance_mm"]
+            if nearest_right_wall is not None
+            else None
+        ),
+
+        "inner_outer_classification_available": False,
+
+        "total_wall_slice_count": len(wall_slices),
+    }
+
+
+def draw_single_nearest_wall_label(frame, wall_slice, label_name, color):
+    """
+    Draws label for one nearest wall slice.
+    """
+
+    x = wall_slice["slice_center_x"]
+    y = wall_slice["y_min"]
+
+    estimated_distance = wall_slice["estimated_distance_mm"]
+    relative_x = wall_slice["relative_x_mm"]
+    relative_y = wall_slice["relative_y_mm"]
+
+    if (
+        estimated_distance is not None
+        and relative_x is not None
+        and relative_y is not None
+    ):
+        label = (
+            f"{label_name} wall "
+            f"d={estimated_distance / 10:.0f}cm "
+            f"x={relative_x:.0f}mm "
+            f"y={relative_y:.0f}mm"
+        )
+    else:
+        label = f"{label_name} wall"
+
+    cv.putText(
+        frame,
+        label,
+        (x, max(y - 10, 20)),
+        cv.FONT_HERSHEY_SIMPLEX,
+        0.5,
+        color,
+        1,
+    )
+
+
+def draw_wall_slices(frame, wall_slices, wall_output):
+    """
+    Draws detected wall slices and labels nearest side-based walls.
+    """
+
+    output_frame = frame.copy()
+
+    for wall_slice in wall_slices:
+        x_start = wall_slice["x_start"]
+        x_end = wall_slice["x_end"]
+        y_min = wall_slice["y_min"]
+        y_max = wall_slice["y_max"]
+
+        wall_side = wall_slice["wall_side"]
+
+        if wall_side == "left":
+            box_color = (255, 255, 0)
+        elif wall_side == "front":
+            box_color = (180, 180, 180)
+        else:
+            box_color = (0, 255, 255)
+
+        cv.rectangle(
+            output_frame,
+            (x_start, y_min),
+            (x_end, y_max),
+            box_color,
+            1,
+        )
+
+    nearest_left_wall = wall_output["nearest_left_wall"]
+    nearest_front_wall = wall_output["nearest_front_wall"]
+    nearest_right_wall = wall_output["nearest_right_wall"]
+
+    if nearest_left_wall is not None:
+        draw_single_nearest_wall_label(
+            output_frame,
+            nearest_left_wall,
+            "left wall",
+            (255, 255, 0),
+        )
+
+    if nearest_front_wall is not None:
+        draw_single_nearest_wall_label(
+            output_frame,
+            nearest_front_wall,
+            "front wall",
+            (180, 180, 180),
+        )
+
+    if nearest_right_wall is not None:
+        draw_single_nearest_wall_label(
+            output_frame,
+            nearest_right_wall,
+            "right wall",
+            (0, 255, 255),
         )
 
     return output_frame

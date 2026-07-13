@@ -130,3 +130,31 @@ MIN_PARKING_MARKER_WIDTH = 20
 MIN_PARKING_MARKER_HEIGHT = 40
 
 MIN_PARKING_CONFIDENCE = 0.45
+
+
+BLACK_WALL_MASK_WINDOW = "Black Wall Mask"
+
+# Black wall HSV range.
+# Black mainly means low brightness/value.
+LOWER_BLACK = (0, 0, 0)
+UPPER_BLACK = (179, 120, 50)
+
+# Known wall height.
+REAL_WALL_HEIGHT_MM = 100
+
+# Analyze only the lower part of the frame.
+# This avoids detecting far background, shadows, or high objects.
+WALL_ROI_START_RATIO = 0.50
+
+# Slice-based wall detection.
+WALL_SLICE_WIDTH_PX = 20
+MIN_WALL_SLICE_PIXELS = 200
+MIN_WALL_SLICE_HEIGHT_PX = 30
+MIN_WALL_SLICE_DENSITY = 0.12
+
+# Image zones.
+LEFT_WALL_ZONE_RATIO = 0.35
+RIGHT_WALL_ZONE_RATIO = 0.65
+
+# Confidence threshold.
+MIN_WALL_CONFIDENCE = 0.35
