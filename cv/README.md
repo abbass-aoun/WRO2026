@@ -625,6 +625,147 @@ Testing should be repeated under different lighting conditions. Final HSV tuning
 The project now includes a reusable HSV tuning tool. This makes it easier to calibrate color thresholds for different cameras and lighting conditions without repeatedly editing the main configuration file.
 
 
+## Feature 12: Black Wall Detection 
+
+### Purpose
+The purpose of this feature is to extract useful computer vision information about the black walls of the track. The track has inner and outer boundaries, but both walls are black and have the same height, so the camera cannot reliably classify a wall as inner or outer unless the driving direction or robot orientation is known.
+
+Therefore, this feature first detects walls by image side:
+
+```text
+left wall
+front wall
+right wall
+```
+
+The feature estimates the closest visible wall distance for each side when that side appears in the camera frame.
+
+### Design Logic
+Walls are different from pillars and parking markers. A pillar or marker is a compact object with a meaningful center. A wall can extend across the frame, appear on the side and front at the same time, and form corners. Because of this, the system does not treat the wall as one large object with one center.
+
+Instead, the black wall mask is divided into narrow vertical slices. Each slice is analyzed independently. If a slice contains enough black wall pixels and has enough visible wall height, the system estimates the distance to that local wall slice.
+
+The nearest wall on each side is then selected:
+
+```text
+nearest left wall
+nearest front wall
+nearest right wall
+```
+
+This gives useful CV information without making unreliable assumptions about inner and outer walls.
+
+### Why Inner and Outer Are Not Classified Immediately
+Both the inner and outer walls are black and have the same height. Therefore, the camera cannot know from color or size alone whether a detected wall is the inner wall or the outer wall.
+
+For example, a wall detected on the right side may mean different things depending on the robot’s driving direction:
+
+```text
+clockwise driving        → right wall is usually inner
+counterclockwise driving → right wall is usually outer
+```
+
+### Algorithm Steps
+Starting from the existing camera frame and HSV conversion:
+
+1. Convert the camera frame from BGR to HSV.
+2. Create a black wall mask using a low-value HSV range.
+3. Clean the black mask using morphology.
+4. Ignore the top part of the frame using a region of interest.
+5. Divide the remaining image into vertical slices.
+6. Count the number of black pixels inside each slice.
+7. Ignore slices with too few black pixels.
+8. Find the highest and lowest black pixel in each valid slice.
+9. Calculate the visible wall height in pixels for that slice.
+10. Ignore slices whose visible wall height is too small.
+11. Estimate the distance to the wall slice using the known wall height.
+12. Estimate the horizontal angle of the slice from the image center.
+13. Estimate camera-relative x/y position for the wall slice.
+14. Classify the slice as left, front, or right based on image position.
+15. Calculate a simple confidence score from the visible wall height.
+16. Store each valid wall slice in a dictionary.
+17. Select the nearest wall slice for the left, front, and right zones.
+18. Draw detected wall slices and label the nearest wall on each side.
+
+### Wall Slice Output
+Each detected wall slice stores:
+
+```python
+{
+    "type": "wall_slice",
+    "wall_side": wall_side,
+
+    "x_start": x_start,
+    "x_end": x_end,
+    "slice_center_x": slice_center_x,
+    "slice_center_y": slice_center_y,
+
+    "y_min": y_min,
+    "y_max": y_max,
+
+    "black_pixels": black_pixels,
+    "wall_pixel_height": wall_pixel_height,
+
+    "estimated_distance_mm": estimated_distance,
+    "angle_deg": angle_deg,
+    "relative_x_mm": relative_x,
+    "relative_y_mm": relative_y,
+
+    "confidence": confidence,
+}
+```
+
+The wall side can be:
+
+```text
+left
+front
+right
+```
+
+### Wall Output
+The summarized wall output stores the nearest detected wall on each side:
+
+```python
+{
+    "left_wall_detected": True,
+    "front_wall_detected": False,
+    "right_wall_detected": True,
+
+    "nearest_left_wall": nearest_left_wall,
+    "nearest_front_wall": None,
+    "nearest_right_wall": nearest_right_wall,
+
+    "left_wall_distance_mm": left_distance,
+    "front_wall_distance_mm": None,
+    "right_wall_distance_mm": right_distance,
+
+    "inner_outer_classification_available": False,
+
+    "total_wall_slice_count": len(wall_slices),
+}
+```
+
+### Distance Estimation
+The system estimates the distance to each wall slice using the known wall height:
+
+```python
+estimated_distance = estimate_object_distance_mm(
+    wall_pixel_height,
+    REAL_WALL_HEIGHT_MM,
+)
+```
+
+This is similar to pillar and parking marker distance estimation, but it is applied locally to slices rather than to one large wall contour.
+
+### Result
+The vision system can now detect black wall regions and estimate the nearest visible wall distance on the left, front, and right sides of the frame. This keeps the wall detection output useful and direction-independent.
+
+### Limitations
+The camera cannot reliably classify inner and outer walls unless the robot’s driving direction or orientation is known. Shadows, dark objects, and lighting changes may also be detected as black wall pixels. The distance estimate is reliable only when the full wall height is visible in a slice. If the wall is partially hidden, cut off, or merged with shadows, the estimated distance may be inaccurate.
+
+### Next Step
+The next step is to integrate the computer vision system we have created into the robot's overall working algorithm, and test it on the robot using the Rasberry pi camera.
 
 
 
