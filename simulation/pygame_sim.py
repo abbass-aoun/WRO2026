@@ -382,15 +382,21 @@ def draw_panel(surf, fonts, run, sec_label, speed, steer,
     pct = int(100 * frame_i // max(total_frames,1))
     text(f"  {pct}%   ({elapsed:.1f} s)", font_sm); gap(10)
 
-    # Lap split timers
-    text("LAP SPLITS", font_sm, TXT_D); gap(3)
+    # Lap split timers — one compact line per lap
+    splits_parts = []
     for lap_i, end_f in enumerate(lap_end_frames):
         lap_t   = end_f * DT
         done    = frame_i >= end_f
-        col_lap = GOLD_C if done else TXT_D
-        marker  = ">" if (not done and (lap_i == 0 or frame_i >= lap_end_frames[lap_i-1])) else " "
-        text(f"  {marker}Lap {lap_i+1}: {lap_t:.1f} s", font_sm, col_lap)
-    gap(8)
+        active  = (not done and (lap_i == 0 or frame_i >= lap_end_frames[lap_i-1]))
+        marker  = ">" if active else ("✓" if done else " ")
+        splits_parts.append((f"L{lap_i+1}:{lap_t:.0f}s", GOLD_C if done else (car_col if active else TXT_D)))
+    text("SPLITS", font_sm, TXT_D); gap(2)
+    sx = PAN_X + pad
+    for part_txt, part_col in splits_parts:
+        ps = font_sm.render(part_txt, True, part_col)
+        surf.blit(ps, (sx, y))
+        sx += ps.get_width() + 6
+    y += font_sm.get_height(); gap(8)
 
     # Special-rule result
     text("LAP 3 RULE", font_sm, TXT_D); gap(3)
