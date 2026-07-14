@@ -19,8 +19,10 @@ WHAT HAPPENS EACH TICK (every 20 ms at 50 Hz):
     8. Sleep until the next tick
 
 PARTNER INTEGRATION:
-    Partner fills in vision/vision_interface.py — three detect_*() methods.
-    Nothing else needs to be touched.
+    Orange/blue floor-line detection is handled by the TCS3200 colour sensor
+    (control/color_sensor.py) — no partner code needed for this.
+    Partner provides pillar positions and parking lot via VisionFrame in the
+    main loop (look for the two MOCK comments inside the control loop).
 
 TUNING GUIDE (competition day):
     All robot-specific numbers are in config.py.
@@ -32,6 +34,7 @@ TUNING GUIDE (competition day):
 import math
 import time
 
+from control.color_sensor import ColorSensor
 from config import (
     WHEELBASE_CM,
     SERVO_MAX_DEG,
@@ -57,13 +60,23 @@ from main.race_manager           import RaceManager, Direction, VisionFrame
 # ─────────────────────────────────────────────────────────────────────────────
 # Hardware pin numbers                              TUNE ON REAL ROBOT
 # ─────────────────────────────────────────────────────────────────────────────
-PIN_MOTOR_IN1    = 23   # L298N IN1 (motor direction)
-PIN_MOTOR_IN2    = 24   # L298N IN2 (motor direction)
-PIN_MOTOR_ENA    = 12   # L298N ENA (PWM speed)
-PIN_SERVO        = 13   # Steering servo signal
-PIN_ENC_LEFT     = 27   # Left  wheel IR encoder
-PIN_ENC_RIGHT    = 19   # Right wheel IR encoder
-PIN_START_BUTTON = 16   # Push button to start the race
+PIN_MOTOR_IN1    = 18   # L298N IN1 (motor direction)       — Pin 12 / GPIO 18
+PIN_MOTOR_IN2    = 13   # L298N IN2 (motor direction)       — Pin 33 / GPIO 13
+PIN_MOTOR_ENA    = 19   # L298N ENA (PWM speed)             — Pin 35 / GPIO 19
+PIN_SERVO        = 12   # Steering servo signal             — Pin 32 / GPIO 12
+PIN_ENC_LEFT     = 7    # Left  wheel IR encoder            — Pin 26 / GPIO  7
+PIN_ENC_RIGHT    = 5    # Right wheel encoder Channel A     — Pin 29 / GPIO  5
+PIN_START_BUTTON = 8    # Push button to start the race     — Pin 24 / GPIO  8
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TCS3200 colour sensor pin numbers  (Pins for Sensors.txt)
+# ─────────────────────────────────────────────────────────────────────────────
+PIN_COLOR_S0  = 17   # Frequency scaling — Pin 11 / GPIO 17
+PIN_COLOR_S1  = 27   # Frequency scaling — Pin 13 / GPIO 27
+PIN_COLOR_S2  = 22   # Filter select     — Pin 15 / GPIO 22
+PIN_COLOR_S3  = 23   # Filter select     — Pin 16 / GPIO 23
+PIN_COLOR_OUT = 24   # Pulse output      — Pin 18 / GPIO 24
+PIN_COLOR_LED = 25   # Illumination LEDs — Pin 22 / GPIO 25
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Motor duty-cycle calibration                      TUNE ON REAL ROBOT
@@ -90,6 +103,9 @@ def main() -> None:
     # ── 1. Create hardware objects ────────────────────────────────────────────
     car      = CarController(PIN_MOTOR_IN1, PIN_MOTOR_IN2, PIN_MOTOR_ENA, PIN_SERVO)
     encoders = RobotEncoders(PIN_ENC_LEFT, PIN_ENC_RIGHT)
+    color    = ColorSensor(PIN_COLOR_S0, PIN_COLOR_S1,
+                           PIN_COLOR_S2, PIN_COLOR_S3, PIN_COLOR_OUT,
+                           PIN_COLOR_LED)
 
     # ── 2. Create state estimation ────────────────────────────────────────────
     ekf   = EKF(wheelbase=WHEELBASE_CM, Q=_Q, R_imu=EKF_R_GYRO_R2)
@@ -161,8 +177,16 @@ def main() -> None:
             robot.update_pose(x, y, theta)
             robot.update_speed(speed_meas)
 
-            # ── VISION (from partner) ─────────────────────────────────────────
-            vision_frame = VisionFrame()   # MOCK — partner replaces this
+            # ── VISION ───────────────────────────────────────────────────────
+            # Orange/blue line detection comes from the hardware colour sensor.
+            # Pillar positions and parking lot come from the partner's camera code
+            # (partner replaces the two MOCK lines below).
+            vision_frame = VisionFrame(
+                orange_line_seen = color.orange_seen,
+                blue_line_seen   = color.blue_seen,
+                pillars          = [],    # MOCK — partner fills this
+                parking_lot      = None,  # MOCK — partner fills this
+            )
 
             # ── RACE LOGIC ────────────────────────────────────────────────────
             trajectory = race.update(robot, vision_frame)
@@ -213,6 +237,7 @@ def main() -> None:
         print("Braking...")
         car.brake(encoders)
         car.stop()
+        color.stop()
         print("Motors stopped.  Race done.")
 
 

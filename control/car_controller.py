@@ -27,7 +27,7 @@ class CarController:
 
     def set_steering(self, angle):
         self.servo.set_servo_angle(angle)
-        sleep(0.05)
+     
 
     def set_all(self, direction, speed, angle):
         self.set_steering(angle)
