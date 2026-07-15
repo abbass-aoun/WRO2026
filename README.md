@@ -489,8 +489,9 @@ IDLE ──(set_lot called)──► APPROACH ──(within 15 cm of entry)─�
 - **DONE**: `_is_inside_lot()` checks the car in lot-local coordinates (along-axis and perpendicular-axis)
 
 Fallback lot positions if partner vision returns `None`:
-- CCW race end: `(260, 50)` heading South
-- CW race end: `(40, 50)` heading South
+- Both directions: `lot_y = LOT_DEPTH_CM` (≈ 27 cm from outer wall), `lot_theta = -π/2`
+- CCW fallback: `lot_x = 200` (car finished heading East — lot estimated right of centre)
+- CW fallback: `lot_x = 100` (car finished heading West — lot estimated left of centre)
 
 ---
 
@@ -588,12 +589,23 @@ WRO 2026 field: 300 × 300 cm. World frame: x = East, y = North.
    │      │    INNER BOX   │       │
    │   (50,50)─────────(250,50)    │
    │                                │
-(0,0)───────────────────────────(300,0)
+   │           [P]                  │   ← parking lot (bottom straight, outer wall)
+(0,0)───────────────────────────(300,0)   (y=0 = outer wall)
 ```
 
 Track centrelines: `y=50` (bottom), `y=250` (top), `x=50` (left), `x=250` (right)  
+Outer wall: `y=0` (south), `y=300` (north), `x=0` (west), `x=300` (east)  
 Corner radius: 50 cm (default)  
 Start position: `(150, 50)` — centre of the bottom straight
+
+**Parking lot** (WRO 2026 Figure 4):  
+- Always on the bottom starting straight, against the south outer wall (`y=0`)  
+- Two magenta blocks bound the lot; right block is at the outer wall (`y=0`), left block at `y=LOT_DEPTH_CM`  
+- `lot_x` = x-centre of the gap between the blocks — **variable**, set by judges, detected by vision  
+- `lot_y` = `LOT_DEPTH_CM` ≈ 27 cm (inner/entry edge of the lot)  
+- `lot_theta` = `−π/2` (car enters heading South, toward `y=0`)  
+- Width: 20 cm (fixed by WRO rules)  
+- Depth: `1.5 × robot_length` from the outer wall into the track
 
 **CCW section sequence** (one lap):
 

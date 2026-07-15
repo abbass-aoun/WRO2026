@@ -61,6 +61,7 @@ from control.robot import Robot
 from trajectory.base import TrajectoryBase
 from trajectory.builder import TrajectoryBuilder, RED, GREEN
 from main.parking import ParkingManager
+from config import LOT_DEPTH_CM
 
 
 # ===========================================================================
@@ -501,13 +502,16 @@ class RaceManager:
         if vision.parking_lot is not None:
             lot_x, lot_y, lot_theta = vision.parking_lot
         else:
-            # Fixed fallback positions (WRO 2026 field layout).
-            # CCW car finishes heading East -> lot on the right side (x=260).
-            # CW  car finishes heading West -> lot on the left  side (x=40).
-            if self._direction == Direction.CCW:
-                lot_x, lot_y, lot_theta = 260.0, 50.0, -math.pi / 2
-            else:
-                lot_x, lot_y, lot_theta = 40.0, 50.0, -math.pi / 2
+            # Fallback: WRO 2026 rules — parking lot is ALWAYS on the bottom
+            # starting straight, against the outer wall (y=0).
+            # Entry is at y=LOT_DEPTH_CM from the outer wall (inner edge of lot).
+            # Car enters heading South (-π/2) into the lot toward y=0.
+            # X position is variable (set by judges); fallback guesses ahead of car:
+            #   CCW car finishes heading East  → lot likely right of centre (x=200)
+            #   CW  car finishes heading West  → lot likely left  of centre (x=100)
+            lot_theta = -math.pi / 2          # always South (into outer wall)
+            lot_y     = LOT_DEPTH_CM          # inner edge of lot ≈ 27 cm from wall
+            lot_x     = 200.0 if self._direction == Direction.CCW else 100.0
 
         self._parking.set_lot(lot_x, lot_y, lot_theta)
         self._parking.build_approach(robot)
@@ -788,7 +792,8 @@ if __name__ == "__main__":
     robot_end = _robot_at(150, 50, 0.0)
     race10._start_parking(robot_end, VisionFrame())   # no parking_lot in vision
     assert race10.state == RaceState.PARKING
-    assert race10._parking.lot_position == (260.0, 50.0, -math.pi/2)
+    # CCW fallback: x=200, y=LOT_DEPTH_CM (inner edge of lot), theta=-π/2
+    assert race10._parking.lot_position == (200.0, LOT_DEPTH_CM, -math.pi/2)
     print(f"  lot_position={race10._parking.lot_position}  PASS")
 
     print("\n" + "=" * 60)

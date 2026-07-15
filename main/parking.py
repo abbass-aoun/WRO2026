@@ -23,6 +23,21 @@ INTERNAL STATES:
     DRIVE_IN   -- following straight into the lot
     DONE       -- car is inside the lot; safe to stop
 
+WRO 2026 FIELD LAYOUT (Figure 11 / Figure 4):
+    The parking lot is ALWAYS on the starting straight (bottom section).
+    It is bounded by two magenta wood elements (20 cm × 2 cm × 10 cm):
+        Right element: next to the outer wall (y = 0 in world frame)
+        Left element:  1.5 × robot_length inward = at y = LOT_DEPTH_CM
+
+    Lot entry (lot_x, lot_y):
+        lot_x  = x-centre of the gap between the two magenta blocks  (variable,
+                 set by judges; detected by vision team)
+        lot_y  = LOT_DEPTH_CM from the outer wall  (≈ 27 cm with an 18 cm robot)
+        lot_theta = -π/2  (car enters heading South, toward the outer wall at y=0)
+
+    Lot bounds:   x ∈ [lot_x - 10, lot_x + 10]   (20 cm wide)
+                  y ∈ [0, LOT_DEPTH_CM]            (from outer wall to inner edge)
+
 CONNECTIONS:
     Reads:   Robot.x, Robot.y, Robot.theta  (current car state)
     Uses:    TrajectoryBuilder.parking_approach()  -- smooth entry curve
