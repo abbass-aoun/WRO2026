@@ -76,7 +76,9 @@ def main():
         cv.imshow(PINK_MASK_WINDOW, pink_mask)
         cv.imshow(BLACK_WALL_MASK_WINDOW, black_wall_mask)
 
-        if cv.waitKey(1) & 0xFF == ord("p"):
+        key = cv.waitKey(1) & 0xFF
+
+        if key == ord("p"):
             print("\n========== CURRENT VISION OUTPUT ==========")
             print("Navigation:", navigation_output)
             print()
@@ -86,7 +88,7 @@ def main():
             print("===========================================\n")
 
         # Press q to close the camera window
-        if cv.waitKey(1) & 0xFF == ord("q"):
+        if key == ord("q"):
             break
 
     release_camera(cap)
