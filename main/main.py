@@ -35,6 +35,7 @@ import math
 import time
 
 from control.color_sensor import ColorSensor
+from main.vision_adapter import VisionThread, build_vision_frame
 from config import (
     WHEELBASE_CM,
     SERVO_MAX_DEG,
@@ -55,7 +56,7 @@ from control.allEncodersClass    import RobotEncoders
 from control.steering_controller import SteeringPIDController
 from control.driving_controller  import DrivingPIDController
 from estimation.ekf              import EKF
-from main.race_manager           import RaceManager, Direction, VisionFrame
+from main.race_manager           import RaceManager, Direction
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Hardware pin numbers                              TUNE ON REAL ROBOT
@@ -106,6 +107,7 @@ def main() -> None:
     color    = ColorSensor(PIN_COLOR_S0, PIN_COLOR_S1,
                            PIN_COLOR_S2, PIN_COLOR_S3, PIN_COLOR_OUT,
                            PIN_COLOR_LED)
+    vision   = VisionThread()          # starts camera pipeline in background
 
     # ── 2. Create state estimation ────────────────────────────────────────────
     ekf   = EKF(wheelbase=WHEELBASE_CM, Q=_Q, R_imu=EKF_R_GYRO_R2)
@@ -178,14 +180,14 @@ def main() -> None:
             robot.update_speed(speed_meas)
 
             # ── VISION ───────────────────────────────────────────────────────
-            # Orange/blue line detection comes from the hardware colour sensor.
-            # Pillar positions and parking lot come from the partner's camera code
-            # (partner replaces the two MOCK lines below).
-            vision_frame = VisionFrame(
-                orange_line_seen = color.orange_seen,
-                blue_line_seen   = color.blue_seen,
-                pillars          = [],    # MOCK — partner fills this
-                parking_lot      = None,  # MOCK — partner fills this
+            # Orange/blue lines: TCS3200 color sensor (background thread).
+            # Pillars + parking lot: partner's camera pipeline (VisionThread),
+            # converted from camera-relative mm to world-frame cm via robot pose.
+            vision_frame = build_vision_frame(
+                vision.navigation_output,
+                vision.parking_output,
+                robot,
+                color,
             )
 
             # ── RACE LOGIC ────────────────────────────────────────────────────
@@ -238,6 +240,7 @@ def main() -> None:
         car.brake(encoders)
         car.stop()
         color.stop()
+        vision.stop()
         print("Motors stopped.  Race done.")
 
 
