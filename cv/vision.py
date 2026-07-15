@@ -30,12 +30,7 @@ from config import(
     MAX_ASPECT_RATIO,
     MIN_EXTENT,
     MIN_CONFIDENCE,
-    LEFT_REGION_RATIO,
-    RIGHT_REGION_RATIO,
-    FAR_PILLAR_HEIGHT,
-    CLOSE_PILLAR_HEIGHT,
     NAVIGATION_MIN_CONFIDENCE,
-    ACTION_DISTANCE_LEVELS,
     REAL_PILLAR_HEIGHT_MM,
     FOCAL_LENGTH_PIXELS,
     BOUNDING_BOX_THICKNESS,
@@ -259,50 +254,6 @@ def is_valid_pillar(area, width, height, aspect_ratio, extent, confidence):
     return True
 
 
-def classify_horizontal_position(center_x, frame_width):
-    """
-    Classifies an object's horizontal position in the camera frame.
-
-    Args:
-        center_x: The abscissa of the object's center.
-        frame_width: The width of the camera frame
-
-    Returns:
-        position: "left", "center", or "right"
-    """
-
-    left_boundary = int(frame_width * LEFT_REGION_RATIO)
-    right_boundary = int(frame_width * RIGHT_REGION_RATIO)
-
-    if(center_x < left_boundary):
-        return "left"
-    
-    if(center_x > right_boundary):
-        return "right"
-    
-    return "center"
-
-
-def estimate_distance_level(height):
-    """
-    Estimates the approximate distance level of a detected pillar using its bounding box height.
-
-    Args:
-        height: Bounding box height in pixels.
-
-    Returns:
-        distance_level: "far", "medium", or "close".
-    """
-
-    if height < FAR_PILLAR_HEIGHT:
-        return "far"
-    
-    if height > CLOSE_PILLAR_HEIGHT:
-        return "close"
-    
-    return "medium"
-
-
 def estimate_object_distance_mm(pixel_height, real_height_mm):
     """
     Estimates distance from the camera to an object using its real height
@@ -427,8 +378,6 @@ def detect_pillars(mask, color_name, frame_width):
         center_x = x + width // 2
         center_y = y + height // 2
 
-        horizontal_position = classify_horizontal_position(center_x, frame_width)
-        distance_level = estimate_distance_level(height)
 
         estimated_distance = estimate_object_distance_mm(height, REAL_PILLAR_HEIGHT_MM)
         angle_rad, angle_deg = estimate_horizontal_angle(center_x, frame_width)
@@ -442,8 +391,6 @@ def detect_pillars(mask, color_name, frame_width):
             "height": height,
             "center_x": center_x,
             "center_y": center_y,
-            "horizontal_position": horizontal_position,
-            "distance_level": distance_level,
             "estimated_distance_mm": estimated_distance,
             "angle_deg": angle_deg,
             "relative_x_mm": relative_x,
@@ -480,8 +427,6 @@ def draw_detections(frame, detections):
         height = detection["height"]
         center_x = detection["center_x"]
         center_y = detection["center_y"]
-        horizontal_position = detection["horizontal_position"]
-        distance_level = detection["distance_level"]
         estimated_distance = detection["estimated_distance_mm"]
         relative_x = detection["relative_x_mm"]
         relative_y = detection["relative_y_mm"]
@@ -513,13 +458,13 @@ def draw_detections(frame, detections):
         )
         if estimated_distance is not None:
             label = (
-                f"{color_name} "
-                f"d={estimated_distance / 10:.0f}cm "
-                f"pixel_height={height}"
+                f"X = {relative_x} "
+                f"Y = {relative_y}"
+                f"d = {estimated_distance / 10:.0f}cm "     
             )
 
         else:
-            label = f"{color_name} {distance_level} - conf = {confidence:.2f}"
+            label = f"{color_name} - conf = {confidence:.2f}"
 
         cv.putText(
             output_frame,
@@ -574,7 +519,7 @@ def select_primary_detection(detections):
         if detection["confidence"] < NAVIGATION_MIN_CONFIDENCE:
             continue
         
-        if detection["distance_level"] not in ACTION_DISTANCE_LEVELS:
+        if detection["estimated_distance_mm"] is None:
             continue
 
         usable_detections.append(detection)
@@ -582,12 +527,12 @@ def select_primary_detection(detections):
     if not usable_detections:
         return None
     
-    primary_detection = max(
+    primary_detection = min(
         usable_detections,
-        key = lambda detection: (
-            detection["distance_level"] == "close",
-            detection["confidence"],
-            detection["area"]
+        key=lambda detection: (
+            detection["estimated_distance_mm"],
+            -detection["confidence"],
+            -detection["area"],
         )
     )
 
@@ -613,8 +558,6 @@ def create_navigation_output(detections):
             "reason": "no_reliable_pillar",
             "pillar_color": None,
             "required_pass_side": None,
-            "horizontal_position": None,
-            "distance_level": None,
             "estimated_distance_mm": None,
             "angle_deg": None,
             "relative_x_mm": None,
@@ -630,8 +573,6 @@ def create_navigation_output(detections):
         "reason": "reliable_pillar_detected",
         "pillar_color": color_name,
         "required_pass_side": required_pass_side,
-        "horizontal_position": primary_detection["horizontal_position"],
-        "distance_level": primary_detection["distance_level"],
         "estimated_distance_mm": primary_detection["estimated_distance_mm"],
         "angle_deg": primary_detection["angle_deg"],
         "relative_x_mm": primary_detection["relative_x_mm"],
@@ -894,14 +835,13 @@ def draw_parking_markers(frame, parking_markers):
 
         if relative_x is not None and relative_y is not None:
             label = (
-                f"parking"
                 f"d={estimated_distance / 10:.0f}cm "
-                f"park conf={marker_confidence:.2f} "
-                f"x={relative_x:.0f} "
-                f"y={relative_y:.0f}"
+                f"conf={marker_confidence:.2f} "
+                f"X = {relative_x:.0f} "
+                f"Y = {relative_y:.0f}"
             )
         else:
-            label = f"park conf={marker_confidence:.2f}"
+            label = f"conf={marker_confidence:.2f}"
 
         cv.putText(
             output_frame,
@@ -1113,7 +1053,7 @@ def create_wall_output(wall_slices):
     }
 
 
-def draw_single_nearest_wall_label(frame, wall_slice, label_name, color):
+def draw_single_nearest_wall_label(frame, wall_slice, color):
     """
     Draws label for one nearest wall slice.
     """
@@ -1131,13 +1071,12 @@ def draw_single_nearest_wall_label(frame, wall_slice, label_name, color):
         and relative_y is not None
     ):
         label = (
-            f"{label_name} wall "
             f"d={estimated_distance / 10:.0f}cm "
-            f"x={relative_x:.0f}mm "
-            f"y={relative_y:.0f}mm"
+            f"X = {relative_x:.0f}mm "
+            f"Y = s{relative_y:.0f}mm"
         )
     else:
-        label = f"{label_name} wall"
+        label = f"wall"
 
     cv.putText(
         frame,
@@ -1188,7 +1127,6 @@ def draw_wall_slices(frame, wall_slices, wall_output):
         draw_single_nearest_wall_label(
             output_frame,
             nearest_left_wall,
-            "left wall",
             (255, 255, 0),
         )
 
@@ -1196,7 +1134,6 @@ def draw_wall_slices(frame, wall_slices, wall_output):
         draw_single_nearest_wall_label(
             output_frame,
             nearest_front_wall,
-            "front wall",
             (180, 180, 180),
         )
 
@@ -1204,7 +1141,6 @@ def draw_wall_slices(frame, wall_slices, wall_output):
         draw_single_nearest_wall_label(
             output_frame,
             nearest_right_wall,
-            "right wall",
             (0, 255, 255),
         )
 

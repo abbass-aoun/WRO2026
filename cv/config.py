@@ -41,7 +41,7 @@ MIN_PILLAR_HEIGHT = 30
 # Since the visible front face is approximately 50 mm wide and 100 mm tall, the expected height-to-width ratio is about 2.0.
 # The detector therefore uses an aspect ratio range around this value, while keeping tolerance for perspective distortion, camera angle, and partial detection.
 MIN_ASPECT_RATIO = 1.4
-MAX_ASPECT_RATIO = 3.2
+MAX_ASPECT_RATIO = 3.3
 
 # Extent = contour area / bounding box area.
 # Low extent means the contour does not fill its rectangle well.
@@ -56,28 +56,10 @@ BOUNDING_BOX_THICKNESS = 2
 CENTER_DOT_RADIUS = 5
 
 
-# Camera-relative position thresholds.
-# If center_x is less than 33% of the frame width, the object is on the left.
-# If center_x is greater than 66% of the frame width, the object is on the right.
-# Otherwise, it is in the center.
-LEFT_REGION_RATIO = 0.33
-RIGHT_REGION_RATIO = 0.66
-
-# Distance estimation thresholds based on bounding box height in pixels.
-# In the camera image, a closer pillar appears taller.
-# Initial values - to be tuned with the rasberry pi camera.
-FAR_PILLAR_HEIGHT = 60
-CLOSE_PILLAR_HEIGHT = 150
-
-
 # Navigation decision thresholds
 
 # Minimum confidence needed for a detection to be used for navigation
 NAVIGATION_MIN_CONFIDENCE = 0.55
-
-# Distance levels that are important for navigation.
-# For now, we will ignore far pillars and react only to medium or close pillars.
-ACTION_DISTANCE_LEVELS = ["medium", "close"]
 
 
 # Camera-relative distance and angle estimation
