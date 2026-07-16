@@ -64,7 +64,7 @@ for i in range(4):
     dist_sensors[i].change_address(dist_sensors_Addresses[i])#give each sensor a costum address
 
 for j in range(10):
-    for i in range(2):
+    for i in range(4):
         print("reading from sensor ",i)
         print(dist_sensors[i].read())
         time.sleep(0.3)
