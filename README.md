@@ -70,7 +70,8 @@ All pin numbers are BCM (GPIO) numbers.
 | TCS3200 color sensor | LED | 25 | 22 |
 | VL53L0X ToF #1 XSHUT | — | 4 | 7 |
 | VL53L0X ToF #2 XSHUT | — | 10 | 19 |
-| VL53L0X ToF #3 XSHUT | — | 9 | 21 |
+| VL53L0X ToF #3 XSHUT | — | 11 | 23 |
+| VL53L0X ToF #4 XSHUT | — | 6 | 31 |
 | MPU-6050 IMU | SDA | 2 | 3 |
 | MPU-6050 IMU | SCL | 3 | 5 |
 
@@ -81,12 +82,12 @@ All pin numbers are BCM (GPIO) numbers.
 | IR slot encoders ×2 | Wheel speed (cm/s) and distance | 50 pulses/rev, ~20.48 cm circumference |
 | MPU-6050 | Yaw angular rate (rad/s) for EKF | No absolute heading — gyro only |
 | TCS3200 color sensor | Detect orange/blue floor lines | Background thread, ~12 Hz update |
-| VL53L0X ToF ×3 | Wall/obstacle distances in mm | ~55 ms per read; not in main loop |
+| VL53L0X ToF ×4 | Wall/obstacle distances in mm | ~55 ms per read; not in main loop |
 
 ### Software dependencies
 
 ```bash
-pip install gpiozero mpu6050-raspberrypi smbus2 numpy pygame
+pip install gpiozero mpu6050-raspberrypi smbus2 numpy pygame opencv-python
 ```
 
 ---
@@ -102,7 +103,7 @@ WRO2026/
 │   ├── car_controller.py      # Motor + servo hardware wrapper
 │   ├── allEncodersClass.py    # Wheel encoders + MPU-6050 gyro reader
 │   ├── color_sensor.py        # TCS3200 floor-line detector (background thread)
-│   ├── tof_sensor.py          # VL53L0X ToF sensors (3×, I2C address reassignment)
+│   ├── tof_sensor.py          # VL53L0X ToF sensors (4×, I2C address reassignment)
 │   ├── steering_controller.py # Steering PID (cross-track + heading error)
 │   ├── driving_controller.py  # Speed PID (curvature-adaptive target speed)
 │   ├── pid_controller.py      # Base PID class (used by both controllers above)
@@ -267,22 +268,23 @@ The onboard LED (GPIO 25) is turned ON at startup for consistent illumination re
 
 ---
 
-#### `tof_sensor.py` — VL53L0X time-of-flight sensors (×3)
+#### `tof_sensor.py` — VL53L0X time-of-flight sensors (×4)
 
-Manages three VL53L0X laser distance sensors that share the same I2C bus.
+Manages four VL53L0X laser distance sensors that share the same I2C bus.
 
-**Startup sequence** (critical — all three boot at address 0x29):
+**Startup sequence** (critical — all four boot at address 0x29):
 1. Pull all XSHUT pins LOW → all sensors off
 2. Power up sensor 1, assign it address 0x30
 3. Power up sensor 2, assign it address 0x31
 4. Power up sensor 3, assign it address 0x32
+5. Power up sensor 4, assign it address 0x33
 
 ```python
 tof = ToFSensors()
-d1, d2, d3 = tof.read_all_mm()   # distances in mm (None on failure)
+d1, d2, d3, d4 = tof.read_all_mm()   # distances in mm (None on failure)
 ```
 
-> **Warning**: each read takes ~55 ms; reading all three = ~165 ms.  
+> **Warning**: each read takes ~55 ms; reading all four = ~220 ms.  
 > Do NOT call `read_all_mm()` inside the 50 Hz main loop.  
 > Use in a background thread or for diagnostic purposes only.
 
@@ -652,7 +654,7 @@ The orange/blue floor line detection is **already handled** by the TCS3200 hardw
 
 ```bash
 # On the Raspberry Pi
-pip install gpiozero mpu6050-raspberrypi smbus2 numpy
+pip install gpiozero mpu6050-raspberrypi smbus2 numpy opencv-python
 ```
 
 ### Start the race
@@ -670,7 +672,7 @@ Each module has a built-in self-test. Run from the project root:
 
 ```bash
 python -m control.color_sensor     # live R/G/B readings — use to tune thresholds
-python -m control.tof_sensor       # live distance readings from all 3 ToF sensors
+python -m control.tof_sensor       # live distance readings from all 4 ToF sensors
 python -m estimation.ekf           # 7 EKF unit tests
 python -m trajectory.bezier        # Bézier arc-length and curvature tests
 python -m trajectory.builder       # path building tests

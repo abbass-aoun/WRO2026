@@ -6,18 +6,19 @@ Ported from Hardware/ToF LastYear.py, updated for the 2026 pinout and
 rewritten to use gpiozero for the XSHUT pins (consistent with the rest
 of the project).
 
-Three VL53L0X sensors share the same I2C bus. They all boot at address
+Four VL53L0X sensors share the same I2C bus. They all boot at address
 0x29, so we must power them up one at a time during __init__ and assign
 each a unique address before turning the next one on.
 
 WIRING (from Pins for Sensors.txt):
     SDA      → Pin 3  (GPIO 2)   shared I2C bus
     SCL      → Pin 5  (GPIO 3)   shared I2C bus
-    Vin (×3) → Pin 1  (3.3 V)
-    GND (×3) → Pin 6  (GND)
+    Vin (×4) → Pin 1  (3.3 V)
+    GND (×4) → Pin 6  (GND)
     XSHUT 1  → Pin 7  (GPIO 4)
     XSHUT 2  → Pin 19 (GPIO 10)
-    XSHUT 3  → Pin 21 (GPIO 9)
+    XSHUT 3  → Pin 23 (GPIO 11)
+    XSHUT 4  → Pin 31 (GPIO 6)
 
 INSTALL:
     pip install smbus2
@@ -26,7 +27,7 @@ USAGE:
     tof = ToFSensors()
     d1, d2, d3 = tof.read_all_mm()
     # Each value is distance in mm, or None if that sensor failed.
-    # Sensor order matches xshut_pins: (GPIO 4, GPIO 10, GPIO 9).
+    # Sensor order matches xshut_pins: (GPIO 4, GPIO 10, GPIO 11, GPIO 6).
 
 TUNING:
     Which sensor is left/front/right depends on how you mounted them.
@@ -61,13 +62,14 @@ class ToFSensors:
 
     def __init__(
         self,
-        xshut_pins: tuple = (4, 10, 9),           # BCM GPIO (Pins for Sensors.txt)
-        addresses:  tuple = (0x30, 0x31, 0x32),   # addresses assigned at startup
+        xshut_pins: tuple = (4, 10, 11, 6),              # BCM GPIO (Pins for Sensors.txt)
+        addresses:  tuple = (0x30, 0x31, 0x32, 0x33),   # addresses assigned at startup
     ):
         """
         Args:
             xshut_pins : BCM GPIO pin for each sensor's XSHUT line.
-                         Sensor 1 = GPIO 4, Sensor 2 = GPIO 10, Sensor 3 = GPIO 9.
+                         Sensor 1 = GPIO 4, Sensor 2 = GPIO 10,
+                         Sensor 3 = GPIO 11, Sensor 4 = GPIO 6.
                          TUNE ON REAL ROBOT if a sensor does not respond.
             addresses  : unique I2C addresses to assign (must not be 0x29 or clash).
         """
@@ -108,7 +110,7 @@ class ToFSensors:
         Read distance from one sensor.
 
         Args:
-            index : 0, 1, or 2 — matches the order of xshut_pins.
+            index : 0, 1, 2, or 3 — matches the order of xshut_pins.
 
         Returns:
             Distance in mm (int), or None if the sensor is unavailable or fails.
@@ -130,13 +132,13 @@ class ToFSensors:
 
     def read_all_mm(self) -> tuple:
         """
-        Read all three sensors sequentially.
+        Read all four sensors sequentially.
 
         Returns:
-            (d1_mm, d2_mm, d3_mm) — each value is mm or None on failure.
+            (d1_mm, d2_mm, d3_mm, d4_mm) — each value is mm or None on failure.
 
         NOTE: Each read takes ~55 ms (50 ms measurement + overhead), so
-        reading all three takes ~165 ms. Do NOT call this inside the 50 Hz
+        reading all four takes ~220 ms. Do NOT call this inside the 50 Hz
         main loop. Either call it in a background thread or only use it
         for diagnostic purposes.
         """
@@ -155,10 +157,11 @@ if __name__ == "__main__":
 
     try:
         while True:
-            d1, d2, d3 = tof.read_all_mm()
-            print(f"  Sensor 1 (GPIO 4) : {d1} mm    "
+            d1, d2, d3, d4 = tof.read_all_mm()
+            print(f"  Sensor 1 (GPIO  4): {d1} mm    "
                   f"Sensor 2 (GPIO 10): {d2} mm    "
-                  f"Sensor 3 (GPIO 9) : {d3} mm")
+                  f"Sensor 3 (GPIO 11): {d3} mm    "
+                  f"Sensor 4 (GPIO  6): {d4} mm")
             time.sleep(0.3)
     except KeyboardInterrupt:
         print("\nStopped.")
