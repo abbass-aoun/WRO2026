@@ -57,7 +57,7 @@ class DistanceSensor:
 
 
 dist_sensors=[]
-dist_sensors_pins=[4,10,11,6] #GPIo numbering
+dist_sensors_pins=[4,10,9,6] #GPIo numbering
 dist_sensors_Addresses=[0x30,0x31,0x32,0x33]  # I2C addresses
 for i in range(4):
     dist_sensors.append(DistanceSensor(dist_sensors_pins[i]))#create a sensor object and intlize it and add it to the array

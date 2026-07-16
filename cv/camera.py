@@ -1,39 +1,46 @@
 # cv/camera.py
+import time
 
-import cv2 as cv
-from config import CAMERA_INDEX
+try:
+    from picamera2 import Picamera2
+    _PICAMERA2_AVAILABLE = True
+except ImportError:
+    _PICAMERA2_AVAILABLE = False
+
+_FRAME_WIDTH  = 640
+_FRAME_HEIGHT = 480
 
 
 def open_camera():
     """
-    Opens the camera and returns the camera object.
+    Opens the Raspberry Pi Camera Module using Picamera2 and returns the
+    camera object.  BGR888 format produces a NumPy array in BGR order,
+    which is directly compatible with all OpenCV functions.
     """
+    if not _PICAMERA2_AVAILABLE:
+        raise RuntimeError(
+            "picamera2 is not installed. Run: pip install picamera2"
+        )
+    cam = Picamera2()
+    config = cam.create_preview_configuration(
+        main={"format": "BGR888", "size": (_FRAME_WIDTH, _FRAME_HEIGHT)}
+    )
+    cam.configure(config)
+    cam.start()
+    time.sleep(0.5)   # warm-up: allow auto-exposure to stabilise
+    return cam
 
-    cap = cv.VideoCapture(CAMERA_INDEX)
 
-    if not cap.isOpened():
-        raise RuntimeError("Could not open camera. Check CAMERA_INDEX or camera connection.")
-
-    return cap
-
-
-def read_frame(cap):
+def read_frame(cam):
     """
-    Reads one frame from the camera and returns it
+    Captures one frame and returns it as a (H, W, 3) uint8 NumPy array
+    in BGR order, identical in layout to what cv2.VideoCapture.read()
+    would have returned.
     """
-
-    ret, frame = cap.read()
-
-    if not ret:
-        raise RuntimeError("Could not read frame from camera.")
-
-    return frame
+    return cam.capture_array()
 
 
-def release_camera(cap):
-    """
-    Releases/closes the camera and OpenCV windows properly.
-    """
-
-    cap.release()
-    cv.destroyAllWindows()
+def release_camera(cam):
+    """Stops and closes the camera cleanly."""
+    cam.stop()
+    cam.close()

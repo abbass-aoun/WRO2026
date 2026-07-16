@@ -190,6 +190,7 @@ class VisionThread:
     # ------------------------------------------------------------------
 
     def _run(self) -> None:
+        _err_count = 0
         while not self._stop_event.is_set():
             try:
                 frame = _read_frame(self._cap)
@@ -207,9 +208,14 @@ class VisionThread:
                     self._nav  = nav
                     self._park = park
 
+                _err_count = 0   # reset on successful frame
+
             except Exception as e:
-                # Log but don't crash the thread on transient frame errors
-                print(f"[VisionThread] frame error: {e}")
+                _err_count += 1
+                # Print on first error and every 100 thereafter to avoid log spam
+                if _err_count == 1 or _err_count % 100 == 0:
+                    print(f"[VisionThread] frame error (x{_err_count}): {e}")
+                self._stop_event.wait(0.1)   # brief back-off before retrying
 
     def stop(self) -> None:
         """Stop the background thread and release the camera."""

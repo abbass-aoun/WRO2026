@@ -70,7 +70,7 @@ All pin numbers are BCM (GPIO) numbers.
 | TCS3200 color sensor | LED | 25 | 22 |
 | VL53L0X ToF #1 XSHUT | — | 4 | 7 |
 | VL53L0X ToF #2 XSHUT | — | 10 | 19 |
-| VL53L0X ToF #3 XSHUT | — | 11 | 23 |
+| VL53L0X ToF #3 XSHUT | — | 9 | 21 |
 | VL53L0X ToF #4 XSHUT | — | 6 | 31 |
 | MPU-6050 IMU | SDA | 2 | 3 |
 | MPU-6050 IMU | SCL | 3 | 5 |

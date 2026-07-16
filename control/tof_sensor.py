@@ -10,14 +10,14 @@ Four VL53L0X sensors share the same I2C bus. They all boot at address
 0x29, so we must power them up one at a time during __init__ and assign
 each a unique address before turning the next one on.
 
-WIRING (from Pins for Sensors.txt):
+WIRING (from PinsUpdated.txt + physical wiring):
     SDA      → Pin 3  (GPIO 2)   shared I2C bus
     SCL      → Pin 5  (GPIO 3)   shared I2C bus
     Vin (×4) → Pin 1  (3.3 V)
     GND (×4) → Pin 6  (GND)
     XSHUT 1  → Pin 7  (GPIO 4)
     XSHUT 2  → Pin 19 (GPIO 10)
-    XSHUT 3  → Pin 23 (GPIO 11)
+    XSHUT 3  → Pin 21 (GPIO 9)
     XSHUT 4  → Pin 31 (GPIO 6)
 
 INSTALL:
@@ -27,7 +27,7 @@ USAGE:
     tof = ToFSensors()
     d1, d2, d3 = tof.read_all_mm()
     # Each value is distance in mm, or None if that sensor failed.
-    # Sensor order matches xshut_pins: (GPIO 4, GPIO 10, GPIO 11, GPIO 6).
+    # Sensor order matches xshut_pins: (GPIO 4, GPIO 10, GPIO 9, GPIO 6).
 
 TUNING:
     Which sensor is left/front/right depends on how you mounted them.
@@ -62,14 +62,14 @@ class ToFSensors:
 
     def __init__(
         self,
-        xshut_pins: tuple = (4, 10, 11, 6),              # BCM GPIO (Pins for Sensors.txt)
-        addresses:  tuple = (0x30, 0x31, 0x32, 0x33),   # addresses assigned at startup
+        xshut_pins: tuple = (4, 10, 9, 6),                # BCM GPIO (PinsUpdated.txt + physical)
+        addresses:  tuple = (0x30, 0x31, 0x32, 0x33),    # addresses assigned at startup
     ):
         """
         Args:
             xshut_pins : BCM GPIO pin for each sensor's XSHUT line.
-                         Sensor 1 = GPIO 4, Sensor 2 = GPIO 10,
-                         Sensor 3 = GPIO 11, Sensor 4 = GPIO 6.
+                         Sensor 1 = GPIO 4,  Sensor 2 = GPIO 10,
+                         Sensor 3 = GPIO 9,  Sensor 4 = GPIO 6.
                          TUNE ON REAL ROBOT if a sensor does not respond.
             addresses  : unique I2C addresses to assign (must not be 0x29 or clash).
         """
@@ -101,7 +101,7 @@ class ToFSensors:
             except OSError as e:
                 print(f"[ToF] Could not assign address 0x{new_addr:X}: {e}")
 
-        # All three sensors are now ON at their unique addresses.
+        # All four sensors are now ON at their unique addresses.
 
     # ------------------------------------------------------------------
 
@@ -160,7 +160,7 @@ if __name__ == "__main__":
             d1, d2, d3, d4 = tof.read_all_mm()
             print(f"  Sensor 1 (GPIO  4): {d1} mm    "
                   f"Sensor 2 (GPIO 10): {d2} mm    "
-                  f"Sensor 3 (GPIO 11): {d3} mm    "
+                  f"Sensor 3 (GPIO  9): {d3} mm    "
                   f"Sensor 4 (GPIO  6): {d4} mm")
             time.sleep(0.3)
     except KeyboardInterrupt:

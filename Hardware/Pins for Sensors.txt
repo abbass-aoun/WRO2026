@@ -6,7 +6,7 @@ SDA (all 4)  ----------> Pin 3  (GPIO 2)
 SCL (all 4)  ----------> Pin 5  (GPIO 3)
 XSHUT 1      ----------> Pin 7  (GPIO 4)
 XSHUT 2      ----------> Pin 19 (GPIO 10)
-XSHUT 3      ----------> Pin 23 (GPIO 11)
+XSHUT 3      ----------> Pin 21 (GPIO 9)
 XSHUT 4      ----------> Pin 31 (GPIO 6)
 
 Accelerometer:
@@ -31,7 +31,7 @@ IR Encoder:
 
 VCC ----------> Pin 1  (3.3V)
 GND ----------> Pin 6  (GND)
-DO  ----------> Pin 26 (GPIO 7)   
+DO  ----------> Pin 26 (GPIO 7)
 AO  ----------> Leave unconnected
 
 Second Encoder:
