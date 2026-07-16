@@ -100,63 +100,68 @@ _Q = np.diag([EKF_Q_XY_CM2, EKF_Q_XY_CM2, EKF_Q_THETA_R2])
 # ─────────────────────────────────────────────────────────────────────────────
 
 def main() -> None:
+    # Initialise to None so the finally block can safely skip un-created objects
+    car      = None
+    encoders = None
+    color    = None
+    vision   = None
 
-    # ── 1. Create hardware objects ────────────────────────────────────────────
-    car      = CarController(PIN_MOTOR_IN1, PIN_MOTOR_IN2, PIN_MOTOR_ENA, PIN_SERVO)
-    encoders = RobotEncoders(PIN_ENC_LEFT, PIN_ENC_RIGHT)
-    color    = ColorSensor(PIN_COLOR_S0, PIN_COLOR_S1,
-                           PIN_COLOR_S2, PIN_COLOR_S3, PIN_COLOR_OUT,
-                           PIN_COLOR_LED)
-    vision   = VisionThread()          # starts camera pipeline in background
-
-    # ── 2. Create state estimation ────────────────────────────────────────────
-    ekf   = EKF(wheelbase=WHEELBASE_CM, Q=_Q, R_imu=EKF_R_GYRO_R2)
-    robot = Robot()
-
-    # ── 3. Create race logic ──────────────────────────────────────────────────
-    race = RaceManager(corner_radius=CORNER_RADIUS_CM)
-
-    # ── 4. Create controllers ─────────────────────────────────────────────────
-    steer_ctrl = SteeringPIDController(
-        Kp             = PID_KP,
-        Ki             = PID_KI,
-        Kd             = PID_KD,
-        output_limits  = (-SERVO_MAX_DEG, SERVO_MAX_DEG),
-        windup_limit   = PID_WINDUP_LIM,
-        heading_weight = PID_HEADING_W,
-    )
-    drive_ctrl = DrivingPIDController(
-        Kp            = 0.010,      # TUNE ON REAL ROBOT
-        Ki            = 0.0,
-        Kd            = 0.0,
-        output_limits = (-0.30, 0.30),
-        windup_limit  = 10.0,
-        base_speed    = BASE_SPEED_CM_S,
-        k_curve       = 1.0,        # TUNE ON REAL ROBOT
-    )
-
-    # ── 5. Wait for start button ──────────────────────────────────────────────
-    from gpiozero import Button
-    start_btn = Button(PIN_START_BUTTON)
-    print("Ready — press the start button to begin.")
-    start_btn.wait_for_press()
-    print("GO!")
-
-    # ── 6. Initialise EKF and race manager ────────────────────────────────────
-    # The car starts at position (150, 50) facing East (or West — unknown yet).
-    # The race manager will detect direction from the first line the camera sees.
-    ekf.initialize(start_x=150.0, start_y=50.0, start_theta=0.0)
-    robot.update_pose(150.0, 50.0, 0.0)
-    encoders.reset()
-
-    race.start(robot, direction=Direction.UNKNOWN)  # direction detected from first line
-
-    steer_par_s = 0.0   # arc-length hint for steering closest-point search
-    drive_par_s = 0.0   # arc-length hint for driving closest-point search
-    tick        = 0     # tick counter (used for IMU update scheduling)
-
-    # ── 7. Control loop ───────────────────────────────────────────────────────
     try:
+        # ── 1. Create hardware objects ────────────────────────────────────────
+        car      = CarController(PIN_MOTOR_IN1, PIN_MOTOR_IN2, PIN_MOTOR_ENA, PIN_SERVO)
+        encoders = RobotEncoders(PIN_ENC_LEFT, PIN_ENC_RIGHT)
+        color    = ColorSensor(PIN_COLOR_S0, PIN_COLOR_S1,
+                               PIN_COLOR_S2, PIN_COLOR_S3, PIN_COLOR_OUT,
+                               PIN_COLOR_LED)
+        vision   = VisionThread()          # starts camera pipeline in background
+
+        # ── 2. Create state estimation ────────────────────────────────────────
+        ekf   = EKF(wheelbase=WHEELBASE_CM, Q=_Q, R_imu=EKF_R_GYRO_R2)
+        robot = Robot()
+
+        # ── 3. Create race logic ──────────────────────────────────────────────
+        race = RaceManager(corner_radius=CORNER_RADIUS_CM)
+
+        # ── 4. Create controllers ─────────────────────────────────────────────
+        steer_ctrl = SteeringPIDController(
+            Kp             = PID_KP,
+            Ki             = PID_KI,
+            Kd             = PID_KD,
+            output_limits  = (-SERVO_MAX_DEG, SERVO_MAX_DEG),
+            windup_limit   = PID_WINDUP_LIM,
+            heading_weight = PID_HEADING_W,
+        )
+        drive_ctrl = DrivingPIDController(
+            Kp            = 0.010,      # TUNE ON REAL ROBOT
+            Ki            = 0.0,
+            Kd            = 0.0,
+            output_limits = (-0.30, 0.30),
+            windup_limit  = 10.0,
+            base_speed    = BASE_SPEED_CM_S,
+            k_curve       = 1.0,        # TUNE ON REAL ROBOT
+        )
+
+        # ── 5. Wait for start button ──────────────────────────────────────────
+        from gpiozero import Button
+        start_btn = Button(PIN_START_BUTTON)
+        print("Ready — press the start button to begin.")
+        start_btn.wait_for_press()
+        print("GO!")
+
+        # ── 6. Initialise EKF and race manager ───────────────────────────────
+        # The car starts at position (150, 50) facing East (or West — unknown yet).
+        # The race manager will detect direction from the first line the camera sees.
+        ekf.initialize(x0=150.0, y0=50.0, theta0=0.0)   # theta0 is in radians
+        robot.update_pose(150.0, 50.0, 0.0)
+        encoders.reset()
+
+        race.start(robot, direction=Direction.UNKNOWN)  # direction detected from first line
+
+        steer_par_s = 0.0   # arc-length hint for steering closest-point search
+        drive_par_s = 0.0   # arc-length hint for driving closest-point search
+        tick        = 0     # tick counter (used for IMU update scheduling)
+
+        # ── 7. Control loop ───────────────────────────────────────────────────
         while not race.is_done:
             t_start = time.monotonic()
 
@@ -234,14 +239,29 @@ def main() -> None:
     except KeyboardInterrupt:
         print("\nKeyboard interrupt — stopping.")
 
+    except Exception as exc:
+        print(f"\nFatal error: {exc}")
+        raise
+
     finally:
-        # Always stop the motors cleanly, even if an exception occurred.
-        print("Braking...")
-        car.brake(encoders)
-        car.stop()
-        color.stop()
-        vision.stop()
-        print("Motors stopped.  Race done.")
+        # Always stop background threads and motors, even if an exception
+        # occurred before the control loop started.  Each step is guarded so
+        # a failure in one cleanup action does not block the others.
+        print("Shutting down...")
+        if car is not None and encoders is not None:
+            try:
+                car.brake(encoders)
+                car.stop()
+            except Exception:
+                pass
+        if color is not None:
+            try:
+                color.stop()
+            except Exception:
+                pass
+        if vision is not None:
+            vision.stop()   # sets stop_event and joins the thread
+        print("Shutdown complete.")
 
 
 def _sleep_rest(t_start: float, dt: float) -> None:
