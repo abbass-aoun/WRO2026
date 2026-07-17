@@ -159,10 +159,11 @@ class VisionThread:
     """
 
     def __init__(self) -> None:
-        self._lock = threading.Lock()
-        self._nav  = dict(_DEFAULT_NAV)
-        self._park = dict(_DEFAULT_PARK)
-        self._stop_event = threading.Event()
+        self._lock        = threading.Lock()
+        self._nav         = dict(_DEFAULT_NAV)
+        self._park        = dict(_DEFAULT_PARK)
+        self._debug_frame = None   # latest raw frame for the debug window
+        self._stop_event  = threading.Event()
 
         if not _CV_AVAILABLE:
             print("[VisionThread] cv/ not available — returning empty outputs.")
@@ -187,6 +188,13 @@ class VisionThread:
         with self._lock:
             return dict(self._park)
 
+    @property
+    def debug_frame(self):
+        """Latest raw camera frame as a NumPy array, or None if not ready."""
+        with self._lock:
+            f = self._debug_frame
+            return f.copy() if f is not None else None
+
     # ------------------------------------------------------------------
 
     def _run(self) -> None:
@@ -205,8 +213,9 @@ class VisionThread:
                 park = _create_parking_output(park_det)
 
                 with self._lock:
-                    self._nav  = nav
-                    self._park = park
+                    self._nav         = nav
+                    self._park        = park
+                    self._debug_frame = frame
 
                 _err_count = 0   # reset on successful frame
 

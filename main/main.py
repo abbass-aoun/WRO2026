@@ -46,6 +46,8 @@ from config import (
     PID_HEADING_W, PID_WINDUP_LIM,
     EKF_Q_XY_CM2, EKF_Q_THETA_R2,
     EKF_R_GYRO_R2, EKF_IMU_PERIOD,
+    MAX_DUTY_SAFE,
+    SHOW_VISION_DEBUG,
 )
 
 import numpy as np
@@ -109,6 +111,7 @@ def main() -> None:
     try:
         # ── 1. Create hardware objects ────────────────────────────────────────
         car      = CarController(PIN_MOTOR_IN1, PIN_MOTOR_IN2, PIN_MOTOR_ENA, PIN_SERVO)
+        car.stop()   # guarantee motor is off regardless of pin power-on state
         encoders = RobotEncoders(PIN_ENC_LEFT, PIN_ENC_RIGHT)
         color    = ColorSensor(PIN_COLOR_S0, PIN_COLOR_S1,
                                PIN_COLOR_S2, PIN_COLOR_S3, PIN_COLOR_OUT,
@@ -143,7 +146,10 @@ def main() -> None:
 
         # ── 5. Wait for start button ──────────────────────────────────────────
         from gpiozero import Button
-        start_btn = Button(PIN_START_BUTTON)
+        # pull_up=True  → pin rests HIGH; pressing (connects to GND) goes LOW
+        # bounce_time   → ignore pulses shorter than 50 ms (debounce)
+        start_btn = Button(PIN_START_BUTTON, pull_up=True, bounce_time=0.05)
+        time.sleep(0.1)   # let the pin settle before we start watching it
         print("Ready — press the start button to begin.")
         start_btn.wait_for_press()
         print("GO!")
@@ -226,11 +232,35 @@ def main() -> None:
                 x, y, theta, trajectory, drive_par_s, speed_meas)
             drive_par_s = drive_ctrl.current_s
             duty = BASE_DUTY + DUTY_GAIN * pid_out
-            duty = max(0.0, min(1.0, duty))
+            duty = max(0.0, min(MAX_DUTY_SAFE, duty))   # hard safety ceiling
 
             # ── HARDWARE OUTPUT ───────────────────────────────────────────────
             car.set_steering(steer_deg)
             car.set_motor('f', duty)
+
+            # ── LOGGING (every 25 ticks = 0.5 s) ────────────────────────────
+            if tick % 25 == 0:
+                v_l_log, v_r_log = encoders.get_linear_speeds()
+                print(
+                    f"[t={tick:05d}] "
+                    f"spd={speed_meas:5.1f} cm/s  "
+                    f"vL={v_l_log:5.1f}  vR={v_r_log:5.1f}  "
+                    f"duty={duty:.3f}  steer={steer_deg:+.1f}°"
+                )
+
+            # ── VISION DEBUG WINDOW ──────────────────────────────────────────
+            if SHOW_VISION_DEBUG:
+                import cv2 as _cv2
+                dbg = vision.debug_frame
+                if dbg is not None:
+                    nav_action = vision.navigation_output.get("action", "")
+                    _cv2.putText(dbg, nav_action, (10, 28),
+                                 _cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                    _cv2.imshow("WRO Vision", dbg)
+                key = _cv2.waitKey(1) & 0xFF
+                if key == ord('q'):
+                    print("Vision window closed — stopping.")
+                    break
 
             # ── TIMING ────────────────────────────────────────────────────────
             tick += 1
@@ -261,6 +291,12 @@ def main() -> None:
                 pass
         if vision is not None:
             vision.stop()   # sets stop_event and joins the thread
+        if SHOW_VISION_DEBUG:
+            try:
+                import cv2 as _cv2
+                _cv2.destroyAllWindows()
+            except Exception:
+                pass
         print("Shutdown complete.")
 
 

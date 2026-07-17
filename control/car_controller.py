@@ -3,6 +3,7 @@ from time import time, sleep
 from control.servoClass import myServo
 from control.allEncodersClass import RobotEncoders
 from control.brake_controller import BrakePIDController
+from config import MOTOR_INVERTED
 
 
 class CarController:
@@ -11,9 +12,13 @@ class CarController:
         self.in2 = DigitalOutputDevice(in2_pin)
         self.ena = PWMOutputDevice(ena_pin)
         self.servo = myServo(servo_pin, center_angle=78, max_deviation=27)
+        self.stop()   # explicit safe state — pins are defined but motor is off
 
     def set_motor(self, direction, speed=1.0):
         speed = max(0.0, min(1.0, speed))
+        # Swap direction if motor wires are physically reversed
+        if MOTOR_INVERTED and direction in ('f', 'b'):
+            direction = 'b' if direction == 'f' else 'f'
         if direction == 'f':
             self.in1.on()
             self.in2.off()

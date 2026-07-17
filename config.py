@@ -117,3 +117,17 @@ SIM_NOISE_THETA_RAD = 0.0004  # Gaussian yaw noise per step (rad, 1-sigma)
 SIM_PILLAR_MISS_CM  = 40.0    # flag: car never got within this distance of a pillar
 SIM_PILLAR_HIT_CM   =  5.0    # flag: car came this close (sign body overlap)
 SIM_STAT_RUNS       =  3      # random scenarios for end-of-run statistics (0 = skip)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Safety / Debug  (bring-up flags — adjust per test session, then lock in)
+# ─────────────────────────────────────────────────────────────────────────────
+# MOTOR_INVERTED : True  → 'f' command wired to backward; swaps direction in
+#                  CarController so the rest of the code never needs to change.
+# MAX_DUTY_SAFE  : hard PWM ceiling (0–1) applied in main.py before every
+#                  motor command.  0.35 limits bench-test speed; raise to
+#                  0.60–0.70 once straight-line tests pass.
+# SHOW_VISION_DEBUG : open a live camera overlay window on the main thread.
+#                     Needs a connected display.  Leave False at competition.
+MOTOR_INVERTED    = False   # flip to True if robot drives backward on 'f'
+MAX_DUTY_SAFE     = 0.35    # TUNE: raise gradually after bench tests pass
+SHOW_VISION_DEBUG = False   # True = live camera window (display must be attached)
