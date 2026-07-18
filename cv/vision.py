@@ -10,10 +10,8 @@ from config import(
     UPPER_RED_2,
     LOWER_GREEN,
     UPPER_GREEN,
-    LOWER_MAGENTA,
-    UPPER_MAGENTA,
-    PARKING_MARKER_LENGTH_MM,
-    PARKING_MARKER_DEPTH_MM,
+    LOWER_PINK,
+    UPPER_PINK,
     PARKING_MARKER_HEIGHT_MM,
     PARKING_LOT_LENGTH_MM,
     PARKING_LOT_WIDTH_MM,
@@ -112,7 +110,7 @@ def create_green_mask(hsv_frame):
 
 def create_pink_mask(hsv_frame):
     """
-    Creates a cleaned binary mask for magenta parking markers.
+    Creates a cleaned binary mask for pink/magenta parking markers.
 
     Args:
         hsv_frame: The camera frame converted to HSV.
@@ -120,14 +118,13 @@ def create_pink_mask(hsv_frame):
     Returns:
         pink_mask: A cleaned binary image where pink/magenta pixels are white.
     """
+    lower_pink = np.array(LOWER_PINK, dtype=np.uint8)
+    upper_pink = np.array(UPPER_PINK, dtype=np.uint8)
 
-    lower_pink = np.array(LOWER_MAGENTA, dtype=np.uint8)
-    upper_pink = np.array(UPPER_MAGENTA, dtype=np.uint8)
+    pink_mask = cv.inRange(hsv_frame, lower_pink, upper_pink)
+    pink_mask = clean_mask(pink_mask)
 
-    magenta_mask = cv.inRange(hsv_frame, lower_pink, upper_pink)
-
-    magenta_mask = clean_mask(magenta_mask)
-    return magenta_mask
+    return pink_mask
 
 
 def create_black_wall_mask(hsv_frame):
@@ -192,8 +189,8 @@ def calculate_detection_confidence(area, width, height, aspect_ratio, extent):
         confidence: A value between 0 and 1.
     """
 
-    area_score = min(area / 3000, 1.0)
-    height_score = min(height / 120, 1.0)
+    area_score = min(area / 3000.0, 1.0)
+    height_score = min(height / 120.0, 1.0)
     extent_score = min(extent / 0.8, 1.0)
 
     if MIN_ASPECT_RATIO <= aspect_ratio <= MAX_ASPECT_RATIO:
@@ -458,8 +455,9 @@ def draw_detections(frame, detections):
         )
         if estimated_distance is not None:
             label = (
-                f"X = {relative_x} "
-                f"Y = {relative_y}"
+                f"h = {height} "
+                #f"X = {relative_x} "
+                #f"Y = {relative_y}"
                 f"d = {estimated_distance / 10:.0f}cm "     
             )
 

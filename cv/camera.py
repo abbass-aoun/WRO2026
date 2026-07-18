@@ -1,5 +1,6 @@
 # cv/camera.py
 import time
+import cv2 as cv
 
 try:
     from picamera2 import Picamera2
@@ -23,7 +24,7 @@ def open_camera():
         )
     cam = Picamera2()
     config = cam.create_preview_configuration(
-        main={"format": "BGR888", "size": (_FRAME_WIDTH, _FRAME_HEIGHT)}
+        main={"format": "RGB888", "size": (_FRAME_WIDTH, _FRAME_HEIGHT)}
     )
     cam.configure(config)
     cam.start()
@@ -37,7 +38,9 @@ def read_frame(cam):
     in BGR order, identical in layout to what cv2.VideoCapture.read()
     would have returned.
     """
-    return cam.capture_array()
+    frame = cam.capture_array()
+    
+    return frame
 
 
 def release_camera(cam):
