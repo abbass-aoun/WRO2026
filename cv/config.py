@@ -39,7 +39,7 @@ MIN_PILLAR_HEIGHT = 30
 # Since the visible front face is approximately 50 mm wide and 100 mm tall, the expected height-to-width ratio is about 2.0.
 # The detector therefore uses an aspect ratio range around this value, while keeping tolerance for perspective distortion, camera angle, and partial detection.
 MIN_ASPECT_RATIO = 1.4
-MAX_ASPECT_RATIO = 3.0
+MAX_ASPECT_RATIO = 3.3
 
 # Extent = contour area / bounding box area.
 # Low extent means the contour does not fill its rectangle well.
