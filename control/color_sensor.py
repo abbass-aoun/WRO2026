@@ -138,13 +138,14 @@ class ColorSensor:
             g = self._read_channel(*self._GREEN)
             b = self._read_channel(*self._BLUE)
 
-            # Orange line: strong red, medium green, weak blue.
-            # TUNE ON REAL ROBOT — run  python -m control.color_sensor  to read raw counts.
-            self.orange_seen = (r > 150 and g > 60 and b < 80 and r > b * 2)
+            # Orange: R strongly dominant over B and G.
+            # Ratio-based so ambient light level doesn't matter.
+            # TUNE ON REAL ROBOT if false positives occur.
+            self.orange_seen = (r > 2000 and r > b * 1.5 and r > g * 0.7)
 
-            # Blue line: dominant blue, weak red and green.
-            # TUNE ON REAL ROBOT
-            self.blue_seen   = (b > 150 and b > r * 2 and b > g)
+            # Blue: B strongly dominant over R and G.
+            # TUNE ON REAL ROBOT if false positives occur.
+            self.blue_seen   = (b > 2000 and b > r * 1.5 and b > g * 0.7)
 
             sleep(self._poll_interval)
 
