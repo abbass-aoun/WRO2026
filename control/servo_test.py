@@ -8,7 +8,7 @@ HOW TO RUN (from project root on the Raspberry Pi):
 import time
 from control.servoClass import myServo
 
-PIN_SERVO = 32
+PIN_SERVO = 12  # GPIO pin for the servo signal wire (BCM numbering)
 
 def main():
     s = myServo(PIN_SERVO)
