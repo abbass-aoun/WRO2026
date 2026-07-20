@@ -73,6 +73,7 @@ def main():
 
             x, y, theta = ekf.state
 
+            car.set_steering(0.0)   # force servo centred every tick
             car.set_motor('f', DRIVE_DUTY)
 
             if tick % 25 == 0:
