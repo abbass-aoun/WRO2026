@@ -11,7 +11,7 @@ class CarController:
         self.in1 = DigitalOutputDevice(in1_pin)
         self.in2 = DigitalOutputDevice(in2_pin)
         self.ena = PWMOutputDevice(ena_pin)
-        self.servo = myServo(servo_pin, center_angle=78, max_deviation=27)
+        self.servo = myServo(servo_pin, center_angle=81, max_deviation=27)
         self.stop()   # explicit safe state — pins are defined but motor is off
 
     def set_motor(self, direction, speed=1.0):
