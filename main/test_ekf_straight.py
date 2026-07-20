@@ -46,7 +46,7 @@ def main():
     ekf      = EKF(wheelbase=WHEELBASE_CM, Q=_Q, R_imu=EKF_R_GYRO_R2)
 
     car.stop()
-    car.set_steering(0.0)   # servo centred
+    # Do NOT command servo — its natural resting position is already straight.
 
     btn = Button(PIN_START_BUTTON, pull_up=True, bounce_time=0.05)
     print("Straight-line EKF test.  Press start button to begin.")
@@ -73,7 +73,6 @@ def main():
 
             x, y, theta = ekf.state
 
-            car.set_steering(0.0)   # force servo centred every tick
             car.set_motor('f', DRIVE_DUTY)
 
             if tick % 25 == 0:
