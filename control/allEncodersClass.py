@@ -82,8 +82,8 @@ class RobotEncoders:
         self._left_total_dist_cm  = 0.0
         self._right_total_dist_cm = 0.0
 
-        self._left_sensor  = Button(wheel_left_pin,  pull_up=True)
-        self._right_sensor = Button(wheel_right_pin, pull_up=True)
+        self._left_sensor  = Button(wheel_left_pin,  pull_up=True, bounce_time=0.003)
+        self._right_sensor = Button(wheel_right_pin, pull_up=True, bounce_time=0.003)
         self._left_sensor.when_pressed  = self._on_left_pulse
         self._right_sensor.when_pressed = self._on_right_pulse
 
@@ -125,6 +125,9 @@ class RobotEncoders:
         dt_r = now - self._right_last_pulse_t
         v_l  = self._cm_per_pulse / dt_l if dt_l < 1.0 else 0.0
         v_r  = self._cm_per_pulse / dt_r if dt_r < 1.0 else 0.0
+        # Clamp: physically impossible above 150 cm/s — bounce/noise guard
+        v_l  = min(v_l, 150.0)
+        v_r  = min(v_r, 150.0)
         return v_l, v_r
 
     def get_speed_cm_s(self) -> float:
