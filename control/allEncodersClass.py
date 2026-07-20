@@ -167,5 +167,8 @@ class RobotEncoders:
         """
         if self._imu is None:
             return 0.0
-        gyro   = self._imu.get_gyro_data()   # deg/s
-        return math.radians(gyro['x'])        # convert to rad/s  — X axis points UP (accel x≈+9.8)
+        try:
+            gyro = self._imu.get_gyro_data()   # deg/s
+            return math.radians(gyro['x'])     # X axis points UP (accel x≈+9.8)
+        except OSError:
+            return 0.0
