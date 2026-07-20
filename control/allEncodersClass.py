@@ -88,7 +88,11 @@ class RobotEncoders:
         self._right_sensor.when_pressed = self._on_right_pulse
 
         if _IMU_AVAILABLE:
-            self._imu = MPU6050Lib(0x68)
+            try:
+                self._imu = MPU6050Lib(0x68)
+            except OSError:
+                print("WARNING: MPU-6050 not responding — gyro disabled, encoders only")
+                self._imu = None
         else:
             self._imu = None
 
