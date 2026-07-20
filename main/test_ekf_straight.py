@@ -67,7 +67,7 @@ def main():
             speed     = 0.5 * (v_l + v_r)
             omega     = encoders.get_yaw_rate()   # 0.0 if IMU absent
 
-            ekf.predict(speed, steer_angle_rad=0.0, dt=DT_S)
+            ekf.predict(speed, 0.0, DT_S)
             if omega != 0.0:
                 ekf.update_gyro_rate(omega, DT_S, R_gyro=EKF_R_GYRO_R2)
 
