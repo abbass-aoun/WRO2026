@@ -8,7 +8,7 @@ HOW TO RUN (from project root on the Raspberry Pi):
 import time
 from control.servoClass import myServo
 
-PIN_SERVO = 12
+PIN_SERVO = 32
 
 def main():
     s = myServo(PIN_SERVO)
