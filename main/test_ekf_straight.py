@@ -68,8 +68,8 @@ def main():
             omega     = encoders.get_yaw_rate()   # 0.0 if IMU absent
 
             ekf.predict(speed, 0.0, DT_S)
-            if omega != 0.0:
-                ekf.update_gyro_rate(omega, DT_S, R_gyro=EKF_R_GYRO_R2)
+            # Gyro disabled here — bias would curve the straight-line estimate.
+            # Enable once bias calibration is done.
 
             x, y, theta = ekf.state
 
