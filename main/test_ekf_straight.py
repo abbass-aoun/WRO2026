@@ -34,7 +34,7 @@ PIN_ENC_LEFT     = 7
 PIN_ENC_RIGHT    = 5
 PIN_START_BUTTON = 8
 
-DRIVE_DUTY  = 0.75   # fixed forward duty — TUNE if too fast/slow
+DRIVE_DUTY  = 0.60   # fixed forward duty — TUNE if too fast/slow
 RUN_TIME_S  = 5.0    # how long to drive before auto-stop
 
 _Q = np.diag([EKF_Q_XY_CM2, EKF_Q_XY_CM2, EKF_Q_THETA_R2])
