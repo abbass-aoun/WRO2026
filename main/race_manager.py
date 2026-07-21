@@ -520,11 +520,11 @@ class RaceManager:
                                vision: VisionFrame) -> Optional[TrajectoryBase]:
         """
         When direction is UNKNOWN, detect from first line crossing.
-        Orange line -> CCW.   Blue line -> CW.
+        Blue line -> CCW.   Orange line -> CW.
         """
-        if vision.orange_line_seen:
+        if vision.blue_line_seen:
             self.start(robot, Direction.CCW)
-        elif vision.blue_line_seen:
+        elif vision.orange_line_seen:
             self.start(robot, Direction.CW)
         return self._current_trajectory
 
