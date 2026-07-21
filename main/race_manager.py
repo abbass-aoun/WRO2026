@@ -240,10 +240,11 @@ class RaceManager:
             car_ctrl.set_speed(throttle)
     """
 
-    TOTAL_LAPS:        int   = 3
-    SECTIONS_PER_LAP:  int   = 8
-    SECTION_END_CM:    float = 15.0   # proximity to exit_xy that counts as "done"
-    LINE_COOLDOWN_TICKS: int = 25     # ticks to ignore lines after a section advance
+    TOTAL_LAPS:          int   = 3
+    SECTIONS_PER_LAP:    int   = 8
+    SECTION_END_CM:      float = 15.0   # proximity to exit_xy that counts as "done"
+    LINE_COOLDOWN_TICKS: int   = 25     # ticks to ignore lines after a section advance
+    WALL_MARGIN_CM:      float = 75.0   # within this distance from any wall = near-wall
 
     def __init__(self, corner_radius: float = 50.0) -> None:
         """
@@ -260,6 +261,8 @@ class RaceManager:
         self._current_trajectory: Optional[TrajectoryBase] = None
         self._swerve_active: bool = False
         self._line_cooldown: int = 0
+        self._corner_count:  int = 0   # corners completed this lap (0-3)
+        self._near_wall:     bool = False  # True when entering corner near a wall
         self._parking: ParkingManager = ParkingManager()
         self._last_sign_color: Optional[int] = None   # tracks last pillar color seen
 
@@ -283,6 +286,8 @@ class RaceManager:
         self._lap          = 1
         self._swerve_active = False
         self._line_cooldown = 0
+        self._corner_count  = 0
+        self._near_wall     = False
         self._last_sign_color = None
         self._state = RaceState.RACING if direction != Direction.UNKNOWN else RaceState.WAITING
 
@@ -390,6 +395,16 @@ class RaceManager:
         return self._state == RaceState.DONE
 
     @property
+    def near_wall(self) -> bool:
+        """True when the robot entered the current corner close to a wall."""
+        return self._near_wall
+
+    @property
+    def corner_count(self) -> int:
+        """Corners completed in the current lap (0-3)."""
+        return self._corner_count
+
+    @property
     def _current_section(self) -> Optional[Section]:
         """The Section object for the current section_idx."""
         if not self._sections:
@@ -445,21 +460,32 @@ class RaceManager:
         """
         True when the car should advance to the next section.
 
-        Primary trigger:  line detection (orange or blue), with a cooldown
-                          to prevent re-triggering on the same crossing.
-        Secondary trigger: Euclidean distance to the section's exit point
-                          falls below SECTION_END_CM.
+        Trigger depends on direction and section type:
+          CW  + straight → orange line ends it
+          CW  + corner   → blue line ends it
+          CCW + straight → blue line ends it
+          CCW + corner   → orange line ends it
+
+        Fallback: proximity to exit point when no line is detected.
         """
         sec = self._current_section
         if sec is None:
             return False
 
-        # Line detection (primary)
+        # Directional line trigger (primary)
         if self._line_cooldown == 0:
-            if vision.orange_line_seen or vision.blue_line_seen:
-                return True
+            cw  = self._direction == Direction.CW
+            ccw = self._direction == Direction.CCW
+            if sec.kind == "straight":
+                if (cw  and vision.orange_line_seen) or \
+                   (ccw and vision.blue_line_seen):
+                    return True
+            else:  # corner
+                if (cw  and vision.blue_line_seen) or \
+                   (ccw and vision.orange_line_seen):
+                    return True
 
-        # Proximity to exit point (secondary / fallback)
+        # Proximity fallback — triggers if color sensor misses the line
         dx = robot.x - sec.exit_x
         dy = robot.y - sec.exit_y
         return math.sqrt(dx * dx + dy * dy) < self.SECTION_END_CM
@@ -471,27 +497,46 @@ class RaceManager:
         If section 7 just completed: increment the lap counter.
         If lap counter exceeds TOTAL_LAPS: start parking.
         """
-        old_idx = self._section_idx
+        old_idx  = self._section_idx
+        old_sec  = self._sections[old_idx]
         self._section_idx   = (self._section_idx + 1) % self.SECTIONS_PER_LAP
         self._swerve_active = False
         self._line_cooldown = self.LINE_COOLDOWN_TICKS
 
-        # Completed a full lap when the section index wraps 7 -> 0
-        if old_idx == self.SECTIONS_PER_LAP - 1:
+        # Track corners completed this lap
+        if old_sec.kind == "corner":
+            self._corner_count += 1
+            print(f"  [corner {self._corner_count}/4 done]")
+
+        # Check near-wall confidence for the NEXT section if it's a corner
+        next_sec = self._sections[self._section_idx]
+        if next_sec.kind == "corner":
+            m = self.WALL_MARGIN_CM
+            self._near_wall = (robot.x < m or robot.x > 300 - m or
+                               robot.y < m or robot.y > 300 - m)
+            state = "WALL (slow)" if self._near_wall else "CONFIDENT"
+            print(f"  [entering corner — {state}  x={robot.x:.0f} y={robot.y:.0f}]")
+
+        # Completed a full lap when 4 corners done
+        if self._corner_count >= 4:
+            self._corner_count = 0
             self._lap += 1
+            print(f"  [LAP {self._lap - 1} COMPLETE → lap {self._lap}]")
 
-            # WRO 2026 special rule: last sign RED after lap 2 -> reverse direction
-            if self._lap == 3 and self._last_sign_color == RED:
-                if self._direction == Direction.CCW:
-                    self._direction = Direction.CW
-                    self._sections  = WROTrack.cw_sections(self._corner_radius)
-                else:
-                    self._direction = Direction.CCW
-                    self._sections  = WROTrack.ccw_sections(self._corner_radius)
+        # WRO 2026 special rule: last sign RED after lap 2 -> reverse direction
+        # (checked on lap transition, lap already incremented via corner_count above)
+        if self._lap == 3 and self._corner_count == 0 and \
+                self._last_sign_color == RED:
+            if self._direction == Direction.CCW:
+                self._direction = Direction.CW
+                self._sections  = WROTrack.cw_sections(self._corner_radius)
+            else:
+                self._direction = Direction.CCW
+                self._sections  = WROTrack.ccw_sections(self._corner_radius)
 
-            if self._lap > self.TOTAL_LAPS:
-                self._start_parking(robot, vision)
-                return
+        if self._lap > self.TOTAL_LAPS:
+            self._start_parking(robot, vision)
+            return
 
         self._build_trajectory(robot, vision)
 
