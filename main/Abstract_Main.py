@@ -360,29 +360,48 @@ def take_step(car, robot, x, y, theta):
 
     return steering_deg
 
-
 def main():
     global state
 
     initialize_start_hardware()
-    
     wait_for_start()
 
+    encoders = RobotEncoders(PIN_ENC_LEFT, PIN_ENC_RIGHT)
+    color    = ColorSensor(PIN_COLOR_S0, PIN_COLOR_S1,
+                           PIN_COLOR_S2, PIN_COLOR_S3,
+                           PIN_COLOR_OUT, PIN_COLOR_LED)
+    ekf      = EKF(wheelbase=WHEELBASE_CM, Q=_Q, R_imu=EKF_R_GYRO_R2)
+    robot    = Robot()
+    car      = CarController(PIN_MOTOR_IN1, PIN_MOTOR_IN2, PIN_MOTOR_ENA, PIN_SERVO)
+
+    gyro_bias = calibrate_gyro(encoders)
+    ekf.initialize(x0=0.0, y0=0.0, theta0=0.0)
+    encoders.reset()
+
     straight_initialized = False
+    last_time = time.monotonic()
 
-    while state == State.RUNNING:
+    try:
+        while state == State.RUNNING:
+            now = time.monotonic()
+            dt  = now - last_time
+            last_time = now
 
-        x, y, theta, orange_seen, blue_seen = read_sensors_and_update_ekf()
+            speed, v_l, v_r, omega, x, y, theta, orange_seen, blue_seen = \
+                read_sensors_and_update_ekf(encoders, color, ekf, robot, dt, gyro_bias)
 
-        if not straight_initialized:
-            initialize_straight_reference(x, y)
-            straight_initialized = True
+            if not straight_initialized:
+                initialize_straight_reference(x, y)
+                straight_initialized = True
 
-        steering = calculate_straight_steering(x, y, theta)
+            take_step(car, robot, x, y, theta)
 
-        take_step(steering)
-    
-    
+    except KeyboardInterrupt:
+        pass
+    finally:
+        car.stop()
+        color.stop()
+
 #bezier curve to move towards the pillar, also take a distance from the pillar to avoid collision.  
 #def calculate_trajectory_to_pillar(): 
         
