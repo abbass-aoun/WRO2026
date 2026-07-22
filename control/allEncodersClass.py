@@ -149,8 +149,10 @@ class RobotEncoders:
         self._right_count         = 0
         self._left_total_dist_cm  = 0.0
         self._right_total_dist_cm = 0.0
-        self._left_last_pulse_t   = time()
-        self._right_last_pulse_t  = time()
+        _far_past = time() - 999.0
+        self._left_last_pulse_t   = _far_past
+        self._right_last_pulse_t  = _far_past
+
 
     # ------------------------------------------------------------------
     # IMU — yaw rate from MPU-6050 gyroscope
