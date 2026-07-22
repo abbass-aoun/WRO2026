@@ -362,124 +362,25 @@ def take_step(car, robot, x, y, theta):
 
 
 def main():
-    global state, driving_direction
+    global state
 
-    # Hardware
     initialize_start_hardware()
-
-    car = CarController(
-        PIN_MOTOR_IN1,
-        PIN_MOTOR_IN2,
-        PIN_MOTOR_ENA,
-        PIN_SERVO
-    )
-
-    encoders = RobotEncoders(
-        PIN_ENC_LEFT,
-        PIN_ENC_RIGHT
-    )
-
-    color = ColorSensor(
-        PIN_COLOR_S0,
-        PIN_COLOR_S1,
-        PIN_COLOR_S2,
-        PIN_COLOR_S3,
-        PIN_COLOR_OUT,
-        PIN_COLOR_LED
-    )
-
-    robot = Robot()
-
-    ekf = EKF(
-        wheelbase=WHEELBASE_CM,
-        Q=_Q,
-        R_imu=EKF_R_GYRO_R2
-    )
-
-    # Robot must stay still here
-    car.stop()
-    gyro_bias = calibrate_gyro(encoders)
-
-    # Wait for physical button
+    
     wait_for_start()
-
-    # Start coordinate system at (0, 0), facing +X
-    encoders.reset()
-    robot.reset()
-    ekf.initialize(
-        x0=0.0,
-        y0=0.0,
-        theta0=0.0
-    )
 
     straight_initialized = False
 
-    try:
+    while state == State.RUNNING:
 
-        while state == State.RUNNING:
+        x, y, theta, orange_seen, blue_seen = read_sensors_and_update_ekf()
 
-            # Sensors → EKF
-            (
-                speed,
-                v_l,
-                v_r,
-                omega,
-                x,
-                y,
-                theta,
-                orange_seen,
-                blue_seen
+        if not straight_initialized:
+            initialize_straight_reference(x, y)
+            straight_initialized = True
 
-            ) = read_sensors_and_update_ekf(
-                encoders,
-                color,
-                ekf,
-                robot,
-                DT_S,
-                gyro_bias
-            )
+        steering = calculate_straight_steering(x, y, theta)
 
-            # Define the target straight only once
-            if not straight_initialized:
-                initialize_straight_reference(x, y)
-                straight_initialized = True
-
-            # Move one step according to target trajectory
-            steering = take_step(
-                car,
-                robot,
-                x,
-                y,
-                theta
-            )
-
-            print(
-                f"x={x:.1f} "
-                f"y={y:.1f} "
-                f"theta={math.degrees(theta):+.1f}° "
-                f"steer={steering:+.1f}°"
-            )
-
-            # Corner trajectory is not implemented yet:
-            # safely stop at first coloured line.
-            if orange_seen:
-
-                driving_direction = DrivingDirection.CW
-                print("Orange → CW. First corner reached.")
-                break
-
-            elif blue_seen:
-
-                driving_direction = DrivingDirection.CCW
-                print("Blue → CCW. First corner reached.")
-                break
-
-            time.sleep(DT_S)
-
-    finally:
-        car.stop()
-        color.stop()
-        state = State.FINISHED
+        take_step(steering)
     
     
 #bezier curve to move towards the pillar, also take a distance from the pillar to avoid collision.  
