@@ -5,6 +5,22 @@ from enum import Enum, auto
 from gpiozero import Button
 from gpiozero import LED
 
+import math
+import time
+import numpy as np
+from gpiozero import Button
+
+from config import (
+    WHEELBASE_CM, DT_S,
+    EKF_Q_XY_CM2, EKF_Q_THETA_R2, EKF_R_GYRO_R2,
+)
+from control.allEncodersClass import RobotEncoders
+from control.color_sensor     import ColorSensor
+from control.robot            import Robot
+from estimation.ekf           import EKF
+from main.support             import calibrate_gyro
+
+
 PIN_START_BUTTON = 8 # Start button is at GPIO 8
 
 #-----------------------------------------------------------
@@ -39,6 +55,7 @@ def initialize_start_hardware():
     led2 = LED(20)
     led3 = LED(21)
     led4 = LED(26)
+    
 
     # Safe initial condition
     led1.off()
@@ -47,6 +64,18 @@ def initialize_start_hardware():
     led4.off()
 
     time.sleep(0.1)
+
+    PIN_ENC_LEFT     = 7
+    PIN_ENC_RIGHT    = 5
+    PIN_COLOR_S0     = 17
+    PIN_COLOR_S1     = 27
+    PIN_COLOR_S2     = 22
+    PIN_COLOR_S3     = 23
+    PIN_COLOR_OUT    = 24
+    PIN_COLOR_LED    = 25
+
+# ── EKF noise matrices ────────────────────────────────────────────────────────
+_Q = np.diag([EKF_Q_XY_CM2, EKF_Q_XY_CM2, EKF_Q_THETA_R2])
 
 
 def wait_for_start():
@@ -87,20 +116,32 @@ def wait_for_start():
         time.sleep(0.01)
 
 #read from sensors and update the EKF
-#def read_sensors_and_update_ekf():
-    
 
-#move in a straight line , using the EKF to correct heading
-#def run_ekf_straight(sensor readingsd, control): out :position
+
+def read_sensors_and_update_ekf(encoders, color, ekf, robot, dt, gyro_bias):
     
-    
-#move in a corner , using the EKF to correct heading    
-#def run_ekf_corner():
-    
-            
-#when seeing a pillar, use the EKF to correct heading and move towards the pillar
-#def run_ekf_pillar():
-        
+    # 1. Encoders
+    v_l, v_r = encoders.get_linear_speeds()
+    speed    = 0.5 * (v_l + v_r)
+
+    # 2. Gyro, bias-corrected
+    omega = encoders.get_yaw_rate() - gyro_bias
+
+    # 3. EKF — gyro supplies the rotation, steer angle is the fallback
+    steer_rad = math.radians(robot.steer_angle)
+    ekf.predict(speed, steer_rad, dt, omega_gyro=omega)
+
+    # 4. Publish to shared state
+    x, y, theta = ekf.state
+    robot.update_pose(x, y, theta)
+    robot.update_speed(speed)
+
+    # 5. Color flags (background thread — instant read)
+    return speed, v_l, v_r, omega, x, y, theta, color.orange_seen, color.blue_seen
+
+
+
+
     
 #bezier curve to move towards the pillar, also take a distance from the pillar to avoid collision.  
 #def calculate_trajectory_to_pillar(): 
