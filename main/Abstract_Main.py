@@ -40,6 +40,7 @@ PIN_MOTOR_ENA = 19
 PIN_SERVO = 12
 PIN_START_BUTTON = 8 # Start button is at GPIO 8
 TEST_DUTY = 0.30
+TEST_SPEED = 0.25
 
 straight_pid = PIDController(
     Kp=PID_KP,
@@ -333,59 +334,152 @@ def calculate_straight_steering(x, y, theta):
 
     return steering_deg
 
-        
+
+def take_step(car, robot, x, y, theta):
+    """
+    Move the robot one control-loop step according to
+    the current straight reference trajectory.
+    """
+
+    # Calculate steering needed to return to / stay on target path
+    steering_deg = calculate_straight_steering(
+        x,
+        y,
+        theta
+    )
+
+    # Save steering so EKF knows the latest commanded steering angle
+    robot.update_steering(steering_deg)
+
+    # Apply steering + forward motor command
+    car.set_all(
+        direction='f',
+        speed=TEST_SPEED,
+        angle=steering_deg
+    )
+
+    return steering_deg
+
+
 def main():
     global state, driving_direction
 
-    # 1. Initialize button + LEDs and wait for start
+    # Hardware
     initialize_start_hardware()
+
+    car = CarController(
+        PIN_MOTOR_IN1,
+        PIN_MOTOR_IN2,
+        PIN_MOTOR_ENA,
+        PIN_SERVO
+    )
+
+    encoders = RobotEncoders(
+        PIN_ENC_LEFT,
+        PIN_ENC_RIGHT
+    )
+
+    color = ColorSensor(
+        PIN_COLOR_S0,
+        PIN_COLOR_S1,
+        PIN_COLOR_S2,
+        PIN_COLOR_S3,
+        PIN_COLOR_OUT,
+        PIN_COLOR_LED
+    )
+
+    robot = Robot()
+
+    ekf = EKF(
+        wheelbase=WHEELBASE_CM,
+        Q=_Q,
+        R_imu=EKF_R_GYRO_R2
+    )
+
+    # Robot must stay still here
+    car.stop()
+    gyro_bias = calibrate_gyro(encoders)
+
+    # Wait for physical button
     wait_for_start()
 
-    # First iteration flag:
-    # We need the first EKF position to define the straight reference line.
+    # Start coordinate system at (0, 0), facing +X
+    encoders.reset()
+    robot.reset()
+    ekf.initialize(
+        x0=0.0,
+        y0=0.0,
+        theta0=0.0
+    )
+
     straight_initialized = False
 
-    while state == State.RUNNING:
+    try:
 
-        # 2. Read sensors and update EKF
-        # Adjust this unpacking to exactly what your partner's method returns.
-        x, y, theta, orange_seen, blue_seen = read_sensors_and_update_ekf()
+        while state == State.RUNNING:
 
-        # 3. Create the reference line only ONCE
-        # when starting the current straight.
-        if not straight_initialized:
-            initialize_straight_reference(x, y)
-            straight_initialized = True
+            # Sensors → EKF
+            (
+                speed,
+                v_l,
+                v_r,
+                omega,
+                x,
+                y,
+                theta,
+                orange_seen,
+                blue_seen
 
-        # 4. Determine direction from the first coloured line
-        if driving_direction == DrivingDirection.UNKNOWN:
+            ) = read_sensors_and_update_ekf(
+                encoders,
+                color,
+                ekf,
+                robot,
+                DT_S,
+                gyro_bias
+            )
 
+            # Define the target straight only once
+            if not straight_initialized:
+                initialize_straight_reference(x, y)
+                straight_initialized = True
+
+            # Move one step according to target trajectory
+            steering = take_step(
+                car,
+                robot,
+                x,
+                y,
+                theta
+            )
+
+            print(
+                f"x={x:.1f} "
+                f"y={y:.1f} "
+                f"theta={math.degrees(theta):+.1f}° "
+                f"steer={steering:+.1f}°"
+            )
+
+            # Corner trajectory is not implemented yet:
+            # safely stop at first coloured line.
             if orange_seen:
+
                 driving_direction = DrivingDirection.CW
-                print("Direction: CW")
+                print("Orange → CW. First corner reached.")
+                break
 
             elif blue_seen:
+
                 driving_direction = DrivingDirection.CCW
-                print("Direction: CCW")
+                print("Blue → CCW. First corner reached.")
+                break
 
-        # 5. Calculate steering needed to stay on the straight path
-        steering = calculate_straight_steering(
-            x,
-            y,
-            theta
-        )
+            time.sleep(DT_S)
 
-        print(
-            f"x={x:.2f}, "
-            f"y={y:.2f}, "
-            f"theta={math.degrees(theta):.2f}°, "
-            f"steering={steering:.2f}°"
-        )
-
-        # Later:
-        # take_step(steering)
-
-        time.sleep(0.02)
+    finally:
+        car.stop()
+        color.stop()
+        state = State.FINISHED
     
     
 #bezier curve to move towards the pillar, also take a distance from the pillar to avoid collision.  
