@@ -66,13 +66,9 @@ def read_sensors_and_update_ekf(encoders, color, ekf, robot, dt,gyro_bias):
     # 2. Gyro
     omega = encoders.get_yaw_rate() -gyro_bias   # rad/s, 0.0 if IMU absent
 
-    # 3. EKF predict (motion model)
+    # 3. EKF predict — omega_gyro replaces the Ackermann dtheta (no double-count)
     steer_rad = math.radians(robot.steer_angle)
-    ekf.predict(speed, steer_rad, dt)
-
-    # 4. EKF update (gyro correction)
-    # explicit flag, set once at startup
-    ekf.update_gyro_rate(omega, dt, R_gyro=EKF_R_GYRO_R2)
+    ekf.predict(speed, steer_rad, dt, omega_gyro=omega)
 
     # 5. Push EKF result into robot state
     x, y, theta = ekf.state

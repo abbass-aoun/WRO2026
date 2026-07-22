@@ -181,8 +181,7 @@ def main() -> None:
 
             # ── EKF ───────────────────────────────────────────────────────────
             steer_rad = math.radians(robot.steer_angle)
-            ekf.predict(speed_meas, steer_rad, DT_S)
-            ekf.update_gyro_rate(omega_gyro, DT_S, R_gyro=EKF_R_GYRO_R2)
+            ekf.predict(speed_meas, steer_rad, DT_S, omega_gyro=omega_gyro)
             # NOTE: ekf.update_imu(heading_abs) would go here if you have a
             #       BNO055 (absolute heading).  MPU-6050 only has gyro rate.
 

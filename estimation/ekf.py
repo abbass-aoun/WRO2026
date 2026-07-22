@@ -109,7 +109,8 @@ class EKF:
     # Predict step
     # ------------------------------------------------------------------
 
-    def predict(self, speed: float, steer_angle: float, dt: float):
+    def predict(self, speed: float, steer_angle: float, dt: float,
+               omega_gyro: float = None):
         """
         Advance the state estimate by one time step using the bicycle model.
 
@@ -133,9 +134,12 @@ class EKF:
             (how heading change affects x and y).
 
         Args:
-            speed:       current speed in cm/s  (from encoder)     # MOCK until encoder wired
-            steer_angle: current steer angle in radians (from servo)# MOCK until servo wired
+            speed:       current speed in cm/s  (from encoder)
+            steer_angle: current steer angle in radians (from servo)
             dt:          time step in seconds (typically 0.02 s)
+            omega_gyro:  measured yaw rate in rad/s from gyro (optional).
+                         When provided, replaces the Ackermann steering model
+                         for dtheta. Use this whenever the gyro is available.
         """
         x, y, theta = self._x
         v = speed
@@ -143,9 +147,12 @@ class EKF:
         L = self._L
 
         # -- Bicycle kinematics (nonlinear motion model) --
-        dx     = v * math.cos(theta) * dt
-        dy     = v * math.sin(theta) * dt
-        dtheta = (v / L) * math.tan(d) * dt
+        dx = v * math.cos(theta) * dt
+        dy = v * math.sin(theta) * dt
+        if omega_gyro is not None:
+            dtheta = omega_gyro * dt          # measured rotation — more accurate
+        else:
+            dtheta = (v / L) * math.tan(d) * dt  # fallback: infer from steer angle
 
         self._x[0] = x + dx
         self._x[1] = y + dy
@@ -214,45 +221,6 @@ class EKF:
         # Covariance update: P = (I - K*H) * P
         # Reformulate K to shape (3,1) for outer product
         self._P = (np.eye(3) - K.reshape(3, 1) @ H) @ self._P
-
-    # ------------------------------------------------------------------
-    # Update step -- gyro angular rate
-    # ------------------------------------------------------------------
-
-    def update_gyro_rate(self, omega_measured: float, dt: float,
-                         R_gyro: float = 1e-5):
-        """
-        Correct the heading estimate using a gyro angular-rate reading.
-
-        The gyro measures dtheta/dt = omega (rad/s).  We integrate one step
-        to get the expected heading change and treat that as a soft heading
-        measurement.  Because gyro drift is slow (~0.01 deg/s for MEMS), the
-        noise R_gyro can be very small, making this update highly trusted.
-
-        WHEN TO CALL:
-            Every tick (50 Hz) immediately after predict().
-            If the IMU also gives an absolute heading, call update_imu() as
-            well (e.g. every 5th tick) to correct long-term gyro drift.
-
-        Args:
-            omega_measured: gyro angular velocity in rad/s        # MOCK until wired
-                            (BNO055: imu.gyro[2] for yaw axis)
-            dt:             time step in seconds (typically 0.02 s)
-            R_gyro:         gyro noise variance (rad^2 per step)  # TUNE ON REAL ROBOT
-                            Default 1e-5 ≈ (0.003 rad)^2 ≈ 0.18 deg per step — typical MEMS.
-        """
-        # Heading implied by integrating the gyro one step from current estimate
-        theta_from_gyro = _wrap(self._x[2] + omega_measured * dt)
-
-        # EKF update — same structure as update_imu() but with R_gyro instead of R_imu
-        H = np.array([[0.0, 0.0, 1.0]])
-        R = np.array([[R_gyro]])
-        y = _wrap(theta_from_gyro - self._x[2])          # innovation (angle-wrapped)
-        S = float((H @ self._P @ H.T + R)[0, 0])
-        K = (self._P @ H.T).flatten() / S                # Kalman gain, shape (3,)
-        self._x    = self._x + K * y
-        self._x[2] = _wrap(self._x[2])
-        self._P    = (np.eye(3) - K.reshape(3, 1) @ H) @ self._P
 
     # ------------------------------------------------------------------
     # Write to Robot
@@ -410,6 +378,24 @@ if __name__ == "__main__":
     print(f"  {ekf}")
     print("  PASS")
 
+    # ------------------------------------------------------------------
+    # Test 8: omega_gyro in predict() does not double-count rotation
+    # ------------------------------------------------------------------
+    print("\nTEST 8: omega_gyro in predict() — no double-count vs steering model")
+    ekf.initialize(0.0, 0.0, 0.0)
+    v, steer, dt_t = 40.0, 0.2, 0.02
+    true_omega = (v / 16.5) * math.tan(steer)   # rad/s from Ackermann model
+    ground_truth_dtheta = true_omega * dt_t * 50
+    # Using omega_gyro: should match ground truth
+    for _ in range(50):
+        ekf.predict(speed=v, steer_angle=steer, dt=dt_t, omega_gyro=true_omega)
+    th_with_gyro = math.degrees(ekf.state[2])
+    gt_deg = math.degrees(ground_truth_dtheta)
+    print(f"  ground truth theta    = {gt_deg:.2f} deg")
+    print(f"  predict(omega_gyro)   = {th_with_gyro:.2f} deg  (must match ground truth)")
+    assert abs(th_with_gyro - gt_deg) < 0.01, f"Expected {gt_deg:.2f}, got {th_with_gyro:.2f}"
+    print("  PASS")
+
     print("\n" + "=" * 60)
-    print("ALL 7 TESTS PASSED")
+    print("ALL 8 TESTS PASSED")
     print("=" * 60)

@@ -101,12 +101,9 @@ class EKFRunner:
         omega_gyro  = _read_gyro_rate()           # rad/s  # MOCK
         theta_abs   = _read_imu_heading()         # rad    # MOCK
 
-        # ── 2. Predict (bicycle kinematics)  ─────────────────────────────────
+        # ── 2. Predict — omega_gyro replaces Ackermann dtheta (no double-count)
         steer_rad = math.radians(steer_deg_cmd)
-        self._ekf.predict(speed_meas, steer_rad, dt)
-
-        # ── 3. Update: gyro rate every tick (fast, low-noise correction)  ─────
-        self._ekf.update_gyro_rate(omega_gyro, dt, R_gyro=R_GYRO)
+        self._ekf.predict(speed_meas, steer_rad, dt, omega_gyro=omega_gyro)
 
         # ── 4. Update: IMU absolute heading every N ticks (drift correction)  ─
         self._tick_count += 1
