@@ -1,6 +1,19 @@
 import time
-
+import math
 from enum import Enum, auto
+
+from trajectory.builder import TrajectoryBuilder
+from control.steering_controller import SteeringPIDController
+from control.pid_controller import PIDController
+
+from config import (
+    SERVO_MAX_DEG,
+    PID_KP,
+    PID_KI,
+    PID_KD,
+    PID_HEADING_W,
+    PID_WINDUP_LIM,
+)
 
 from gpiozero import Button
 from gpiozero import LED
@@ -23,6 +36,16 @@ from main.support             import calibrate_gyro
 
 PIN_START_BUTTON = 8 # Start button is at GPIO 8
 
+straight_pid = PIDController(
+    Kp=PID_KP,
+    Ki=PID_KI,
+    Kd=PID_KD,
+    output_limits=(-SERVO_MAX_DEG, SERVO_MAX_DEG),
+    windup_limit=PID_WINDUP_LIM
+)
+
+steer_path_s = 0.0
+
 #-----------------------------------------------------------
 # States of the robot
 #-----------------------------------------------------------
@@ -31,6 +54,23 @@ class State(Enum):
     RUNNING = auto()
     FINISHED = auto()
 #-----------------------------------------------------------
+
+class DrivingDirection(Enum):
+    UNKNOWN = auto()
+    CCW = auto()
+    CW = auto()
+
+driving_direction = DrivingDirection.UNKNOWN
+
+# Number of 90-degree corners that have been COMPLETED.
+corners_completed = 0
+
+# The robot starts facing along the global +X axis.
+INITIAL_THETA = 0.0  # radians
+
+straight_ref_x = None
+straight_ref_y = None
+target_theta = 0.0
 
 state = State.WAITING
 start_button = None # placeholder for the button object
@@ -73,6 +113,45 @@ def initialize_start_hardware():
     PIN_COLOR_S3     = 23
     PIN_COLOR_OUT    = 24
     PIN_COLOR_LED    = 25
+
+
+def wait_for_start():
+    global state
+
+    leds = [led1, led2, led3, led4]
+
+    leds_on = False
+    last_toggle = time.monotonic()
+
+    print("Ready — waiting for start button.")
+
+    while state == State.WAITING:
+
+        # Toggle all LEDs every 0.5 seconds
+        if time.monotonic() - last_toggle >= 0.5:
+            leds_on = not leds_on
+
+            for led in leds:
+                if leds_on:
+                    led.on()
+                else:
+                    led.off()
+
+            last_toggle = time.monotonic()
+
+        # Start race when physical button is pressed
+        if start_button.is_pressed:
+
+            # Turn all LEDs off before starting
+            for led in leds:
+                led.off()
+
+            state = State.RUNNING
+            print("GO!")
+            break
+
+        time.sleep(0.01)
+
 
 # ── EKF noise matrices ────────────────────────────────────────────────────────
 _Q = np.diag([EKF_Q_XY_CM2, EKF_Q_XY_CM2, EKF_Q_THETA_R2])
@@ -117,7 +196,6 @@ def wait_for_start():
 
 #read from sensors and update the EKF
 
-
 def read_sensors_and_update_ekf(encoders, color, ekf, robot, dt, gyro_bias):
     
     # 1. Encoders
@@ -140,24 +218,134 @@ def read_sensors_and_update_ekf(encoders, color, ekf, robot, dt, gyro_bias):
     return speed, v_l, v_r, omega, x, y, theta, color.orange_seen, color.blue_seen
 
 
+def initialize_straight_reference(x, y):
+    """
+    Called ONCE when the robot enters a new straight section.
+
+    The current EKF position becomes a point on the desired
+    straight reference line.
+    """
+    global straight_ref_x, straight_ref_y, target_theta
+
+    straight_ref_x = x
+    straight_ref_y = y
+
+    target_theta = get_target_theta(
+        driving_direction,
+        corners_completed
+    )
 
 
+def normalize_angle(angle_rad: float) -> float:
+    """
+    Normalize an angle to the range [-pi, +pi).
+
+    Example:
+        270 degrees  -> -90 degrees
+        360 degrees  ->   0 degrees
+    """
+    return math.atan2(
+        math.sin(angle_rad),
+        math.cos(angle_rad)
+    )
+
+
+def get_target_theta(direction, corners_done):
+
+    if corners_done == 0:
+        return INITIAL_THETA
+
+    if direction == DrivingDirection.CCW:
+        turn_sign = +1
+
+    elif direction == DrivingDirection.CW:
+        turn_sign = -1
+
+    else:
+        raise ValueError("Driving direction is still unknown.")
+
+    target_theta = (
+        INITIAL_THETA
+        + turn_sign * corners_done * (math.pi / 2)
+    )
+
+    return normalize_angle(target_theta)
+
+
+def compute_tracking_error(x, y, theta):
+    """
+    Calculate how far the robot differs from the desired straight path.
+
+    Inputs:
+        x, y  : current absolute EKF position in cm
+        theta : current absolute EKF heading in radians
+
+    Returns:
+        combined_error
+        cross_track_error
+        heading_error
+    """
+
+    if straight_ref_x is None or straight_ref_y is None:
+        raise RuntimeError("Straight reference has not been initialized.")
+
+    # Robot displacement from a known point on the desired line
+    dx = x - straight_ref_x
+    dy = y - straight_ref_y
+
+    # Signed perpendicular distance from the desired straight line.
+    # Units: cm
+    cross_track_error = (
+        -math.sin(target_theta) * dx
+        + math.cos(target_theta) * dy
+    )
+
+    # Difference between current robot heading and desired heading.
+    # Normalized to [-pi, +pi].
+    heading_error = math.atan2(
+        math.sin(theta - target_theta),
+        math.cos(theta - target_theta)
+    )
+
+    # Combine position and heading errors.
+    combined_error = (
+        cross_track_error
+        + PID_HEADING_W * heading_error
+    )
+
+    return combined_error, cross_track_error, heading_error
+
+
+def calculate_straight_steering(x, y, theta):
+
+    error, cte, heading_error = compute_tracking_error(
+        x,
+        y,
+        theta
+    )
+
+    steering_deg = straight_pid._compute(error)
+
+    return steering_deg
+
+        
+def main():
+    initialize_start_hardware()
+    
+    wait_for_start()
+    print(state)
+
+if __name__ == "__main__":
+    main()
+    
     
 #bezier curve to move towards the pillar, also take a distance from the pillar to avoid collision.  
 #def calculate_trajectory_to_pillar(): 
-    
-#bezier curve to move , but without a pillar 
-#def calculate_trajectory_no_pillar():       
-    
-#bezier curve to move towards the corner, but without a pillar    
-#def calculate_trajectory_to_corner(): 
-    
-    
+        
 #def see_wall():
     
 #This method calculates the nearest distance from the robot to the curve
-#def compute_tracking_error():#used in get tarjectory methods
-    
+
 #this method will update the local reference to the current position
 #def  update_reference():#transformation matrix
     
@@ -186,20 +374,6 @@ def read_sensors_and_update_ekf(encoders, color, ekf, robot, dt, gyro_bias):
 
 #the trick after lap 2
 #def special_trick():
-    
-    
-    
-def main():
-    initialize_start_hardware()
-    
-    wait_for_start()
-    print(state)
-    
-if __name__ == "__main__":
-    main()
-    
-    
-    
     
     
     
