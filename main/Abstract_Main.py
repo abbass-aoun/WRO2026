@@ -419,6 +419,7 @@ def main():
 #the trick after lap 2
 #def special_trick():
     
-    
+    if__name__ == "__main__":
+    main()
     
 
