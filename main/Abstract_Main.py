@@ -16,6 +16,7 @@ class State(Enum):
     FINISHED = auto()
 #-----------------------------------------------------------
 
+state = State.WAITING
 start_button = None # placeholder for the button object
 led1 = None
 led2 = None
@@ -149,7 +150,7 @@ def wait_for_start():
     
 def main():
     initialize_start_hardware()
-    state = State.WAITING
+    
     wait_for_start()
     print(state)
     
