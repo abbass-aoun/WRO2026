@@ -32,7 +32,7 @@
 | 28 | GPIO1 · reserved (HAT EEPROM) |
 | 29 | GPIO5 · Encoder 2 · A |
 | 30 | GND |
-| 31 | GPIO6 · Encoder 2 · B |
+| 31 | GPIO6 · XSHUT 4 |
 | 32 | GPIO12 · Servo signal ★ PWM |
 | 33 | GPIO13 · Motor IN2 |
 | 34 | GND |
