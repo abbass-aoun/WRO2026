@@ -39,7 +39,7 @@ PIN_MOTOR_IN2 = 13
 PIN_MOTOR_ENA = 19
 PIN_SERVO = 12
 PIN_START_BUTTON = 8 # Start button is at GPIO 8
-TEST_DUTY = 0.30
+TEST_DUTY = 0.60
 TEST_SPEED = 0.5
 
 straight_pid = PIDController(
