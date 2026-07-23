@@ -11,7 +11,7 @@ from config import DT_S
 
 
 TEST_DUTY = 0.30
-TEST_SPEED = 0.25
+TEST_SPEED = 0.5
 
 
 steer_path_s = 0.0
@@ -43,6 +43,8 @@ straight_ref_x = None
 straight_ref_y = None
 target_theta = 0.0
 
+HEADING_DEADBAND_RAD = math.radians(1.0)
+
 #-----------------------------------------------------------
 # Initializing PID controller
 #-----------------------------------------------------------
@@ -53,6 +55,7 @@ from config import(
     PID_KI,
     PID_KD,
     PID_WINDUP_LIM,
+    PID_HEADING_W,
     SERVO_MAX_DEG
 )
 
@@ -201,8 +204,14 @@ def calculate_straight_steering(theta):
         theta - target_theta
     )
 
+    # Ignore very small heading fluctuations
+    if abs(heading_error) < HEADING_DEADBAND_RAD:
+        return 0.0
+
+    weighted_error = PID_HEADING_W * heading_error
+
     steering_deg = straight_pid._compute(
-        heading_error
+        weighted_error
     )
 
     return steering_deg
@@ -273,7 +282,7 @@ def main():
     try:
 
         while state == State.RUNNING:
-
+            
             now = time.monotonic()
             dt = now - last_time
             last_time = now
@@ -303,11 +312,19 @@ def main():
                 theta
             )
 
+            
             print(
                 f"theta={math.degrees(theta):+6.2f}° | "
                 f"target={math.degrees(target_theta):+6.2f}° | "
-                f"steering={steering:+6.2f}°"
+                f"steer={steering:+6.2f}° | "
+                f"omega={math.degrees(omega):+6.2f}°/s | "
+                f"vl={v_l:.2f} | vr={v_r:.2f}"
             )
+            
+            elapsed = time.monotonic() - now
+            
+            if elapsed < DT_S:
+                time.sleep(DT_S - elapsed)
 
     finally:
 
