@@ -18,7 +18,7 @@ class PIDController:
         self.last_time = None
 
     def _compute(self, error):
-        current_time = time.time()
+        current_time = time.monotonic()
         dt = current_time - self.last_time if self.last_time else 0.01
         self.last_time = current_time
 

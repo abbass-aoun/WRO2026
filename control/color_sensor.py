@@ -68,6 +68,7 @@ class ColorSensor:
         led_pin:       int   = 25,    # GPIO pin — onboard illumination LEDs
         sample_time:   float = 0.010, # seconds per channel reading
         poll_interval: float = 0.050, # pause between complete RGB reads
+        confirmation_samples: int = 2,
     ):
         """
         Args:
@@ -97,8 +98,15 @@ class ColorSensor:
         self._sample_time   = sample_time
         self._poll_interval = poll_interval
         self._pulse_count   = 0
+        self._confirmation_samples = max(1, int(confirmation_samples))
+        self._orange_count = 0
+        self._blue_count = 0
+        self._lock = threading.Lock()
+        self._stopped = False
 
-        # Flags written by background thread, read by main loop
+        self.last_rgb = (0.0, 0.0, 0.0)
+        self.raw_color = None
+        self.confirmed_color = None
         self.orange_seen: bool = False
         self.blue_seen:   bool = False
 
@@ -141,11 +149,42 @@ class ColorSensor:
             # Orange: R strongly dominant over B and G.
             # Ratio-based so ambient light level doesn't matter.
             # TUNE ON REAL ROBOT if false positives occur.
-            self.orange_seen = (r > 2000 and r > b * 1.5 and r > g * 0.7)
+            raw_orange = (r > 2000 and r > b * 1.5 and r > g * 0.7)
 
             # Blue: B strongly dominant over R and G.
             # TUNE ON REAL ROBOT if false positives occur.
-            self.blue_seen   = (b > 2000 and b > r * 1.5 and b > g * 0.7)
+            raw_blue = (b > 2000 and b > r * 1.5 and b > g * 0.7)
+
+            if raw_orange == raw_blue:
+                raw_color = None
+            elif raw_orange:
+                raw_color = "ORANGE"
+            else:
+                raw_color = "BLUE"
+
+            if raw_color == "ORANGE":
+                self._orange_count += 1
+                self._blue_count = 0
+            elif raw_color == "BLUE":
+                self._blue_count += 1
+                self._orange_count = 0
+            else:
+                self._orange_count = 0
+                self._blue_count = 0
+
+            if self._orange_count >= self._confirmation_samples:
+                confirmed_color = "ORANGE"
+            elif self._blue_count >= self._confirmation_samples:
+                confirmed_color = "BLUE"
+            else:
+                confirmed_color = None
+
+            with self._lock:
+                self.last_rgb = (r, g, b)
+                self.raw_color = raw_color
+                self.confirmed_color = confirmed_color
+                self.orange_seen = confirmed_color == "ORANGE"
+                self.blue_seen = confirmed_color == "BLUE"
 
             sleep(self._poll_interval)
 
@@ -153,11 +192,32 @@ class ColorSensor:
     # Public API
     # ------------------------------------------------------------------
 
+    def snapshot(self) -> dict:
+        """Return one atomic copy of the latest raw and confirmed reading."""
+        with self._lock:
+            return {
+                "rgb": self.last_rgb,
+                "raw_color": self.raw_color,
+                "confirmed_color": self.confirmed_color,
+                "orange_seen": self.orange_seen,
+                "blue_seen": self.blue_seen,
+            }
+
     def stop(self) -> None:
-        """Stop the background thread and turn off the illumination LEDs."""
+        """Stop the background thread and release its GPIO resources."""
+        if self._stopped:
+            return
         self._stop_event.set()
         self._thread.join(timeout=1.0)
         self._led.off()
+        self._out.when_activated = None
+        self._out.close()
+        self._s0.close()
+        self._s1.close()
+        self._s2.close()
+        self._s3.close()
+        self._led.close()
+        self._stopped = True
 
 
 # =============================================================================

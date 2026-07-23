@@ -1,6 +1,5 @@
 import time
 import math
-import numpy as np
 
 from enum import Enum, auto
 
@@ -10,13 +9,10 @@ from main.support import calibrate_gyro
 from config import DT_S
 
 
-TEST_DUTY = 0.30
-TEST_SPEED = 0.7
+STRAIGHT_DUTY = 0.35
 CORNER_DUTY = 0.30
 
-steer_path_s = 0.0
-
-from main.initialize_hardware import initialize_hardware
+from main.initialize_hardware import cleanup_hardware, initialize_hardware
 
 #-----------------------------------------------------------
 # States of the robot
@@ -46,6 +42,7 @@ current_trajectory = None
 near_s = 0.0
 
 _last_transition_time = 0.0
+_line_armed = True
 
 finish_entry_x = None
 finish_entry_y = None
@@ -69,10 +66,19 @@ from config import(
     PID_WINDUP_LIM,
     PID_HEADING_W,
     SERVO_MAX_DEG,
-    CORNER_RADIUS_CM
+    CORNER_RADIUS_CM,
+    WHEELBASE_CM,
 )
 
 straight_pid = PIDController(
+    Kp=PID_KP,
+    Ki=PID_KI,
+    Kd=PID_KD,
+    output_limits=(-SERVO_MAX_DEG, SERVO_MAX_DEG),
+    windup_limit=PID_WINDUP_LIM
+)
+
+corner_pid = PIDController(
     Kp=PID_KP,
     Ki=PID_KI,
     Kd=PID_KD,
@@ -124,11 +130,16 @@ def read_sensors_and_update_ekf(encoders, color, ekf, robot, dt, gyro_bias):
     speed    = 0.5 * (v_l + v_r)
 
     # 2. Gyro, bias-corrected
-    omega = encoders.get_yaw_rate() - gyro_bias
+    if encoders.has_imu:
+        omega = encoders.get_yaw_rate() - gyro_bias
+        omega_for_ekf = omega
+    else:
+        omega = 0.0
+        omega_for_ekf = None
 
     # 3. EKF — gyro supplies the rotation, steer angle is the fallback
     steer_rad = math.radians(robot.steer_angle)
-    ekf.predict(speed, steer_rad, dt, omega_gyro=omega)
+    ekf.predict(speed, steer_rad, dt, omega_gyro=omega_for_ekf)
 
     # 4. Publish to shared state
     x, y, theta = ekf.state
@@ -136,7 +147,13 @@ def read_sensors_and_update_ekf(encoders, color, ekf, robot, dt, gyro_bias):
     robot.update_speed(speed)
 
     # 5. Color flags (background thread — instant read)
-    return speed, v_l, v_r, omega, x, y, theta, color.orange_seen, color.blue_seen
+    color_state = color.snapshot()
+    return (
+        speed, v_l, v_r, omega, x, y, theta,
+        color_state["orange_seen"],
+        color_state["blue_seen"],
+        color_state,
+    )
 
 
 DEBOUNCE_S = 0.3
@@ -151,11 +168,19 @@ def add_section(orange_seen, blue_seen):
     global current_trajectory
     global near_s
     global _last_transition_time
+    global _line_armed
 
     if state != State.RUNNING:
         return None
 
     if not (orange_seen or blue_seen):
+        _line_armed = True
+        return None
+
+    if orange_seen and blue_seen:
+        return None
+
+    if not _line_armed:
         return None
 
     now = time.monotonic()
@@ -207,6 +232,7 @@ def add_section(orange_seen, blue_seen):
             near_s = 0.0
 
             _last_transition_time = now
+            _line_armed = False
 
             print("Entering corner")
 
@@ -236,6 +262,7 @@ def add_section(orange_seen, blue_seen):
             near_s = 0.0
 
             _last_transition_time = now
+            _line_armed = False
 
 
             # Four corners = one complete lap
@@ -256,24 +283,6 @@ def add_section(orange_seen, blue_seen):
             return "EXIT_CORNER"
 
     return None
-
-
-def initialize_straight_reference(x, y):
-    """
-    Called ONCE when the robot enters a new straight section.
-
-    The current EKF position becomes a point on the desired
-    straight reference line.
-    """
-    global straight_ref_x, straight_ref_y, target_theta
-
-    straight_ref_x = x
-    straight_ref_y = y
-
-    target_theta = get_target_theta(
-        driving_direction,
-        corners_completed
-    )
 
 
 def normalize_angle(angle_rad: float) -> float:
@@ -356,7 +365,7 @@ def take_step(car, robot, theta):
 
     car.set_all(
         direction='f',
-        speed=TEST_SPEED,
+        speed=STRAIGHT_DUTY,
         angle=steering_deg
     )
 
@@ -443,9 +452,17 @@ def corner_step(
     # Steering
     # --------------------------------------------
 
-    steering_deg = steering_pid._compute(
+    correction_deg = steering_pid._compute(
         combined_error
     )
+
+    # Ackermann feedforward supplies the steering needed even when the car is
+    # exactly on the curve.  The PID term then corrects tracking error.
+    curvature = current_trajectory.get_curvature(near_s)
+    feedforward_deg = math.degrees(
+        math.atan(WHEELBASE_CM * curvature)
+    )
+    steering_deg = feedforward_deg + correction_deg
 
     steering_deg = max(
         -SERVO_MAX_DEG,
@@ -477,6 +494,7 @@ def reset_race():
     global _last_transition_time
     global finish_entry_x
     global finish_entry_y
+    global _line_armed
 
     driving_direction = DrivingDirection.UNKNOWN
 
@@ -494,14 +512,16 @@ def reset_race():
     near_s = 0.0
 
     _last_transition_time = 0.0
+    _line_armed = True
 
     finish_entry_x = None
     finish_entry_y = None
 
     straight_pid.reset()
+    corner_pid.reset()
 
 
-def main():
+def _run_main():
     global state
     global finish_entry_x
     global finish_entry_y
@@ -543,11 +563,13 @@ def main():
     update_target_theta()
 
     last_time = time.monotonic()
+    loop_count = 0
 
 
     try:
 
         while state == State.RUNNING:
+            loop_count += 1
 
             now = time.monotonic()
 
@@ -568,7 +590,8 @@ def main():
                 y,
                 theta,
                 orange_seen,
-                blue_seen
+                blue_seen,
+                color_state,
 
             ) = read_sensors_and_update_ekf(
                 encoders,
@@ -655,7 +678,7 @@ def main():
                     x,
                     y,
                     theta,
-                    straight_pid
+                    corner_pid
                 )
 
 
@@ -663,16 +686,26 @@ def main():
             # 5. DEBUG
             # ==========================================
 
-            print(
+            if loop_count % 10 == 0:
+                print(
                 f"section={section_state.name} | "
                 f"dir={driving_direction.name} | "
                 f"lap={laps} | "
                 f"corner={corners_completed} | "
+                f"dt={dt:.4f}s | "
+                f"vL={v_l:.1f} vR={v_r:.1f}cm/s | "
                 f"theta={math.degrees(theta):+.1f}° | "
                 f"target={math.degrees(target_theta):+.1f}° | "
                 f"steer={steering:+.1f}°"
             )
 
+
+            if loop_count % 10 == 0:
+                print(
+                    f"color raw={color_state['raw_color']} "
+                    f"confirmed={color_state['confirmed_color']} "
+                    f"rgb={color_state['rgb']}"
+                )
 
             # ==========================================
             # 6. CONTROL LOOP RATE
@@ -694,7 +727,18 @@ def main():
             led.off()
 
         state = State.FINISHED
-    
+
+
+def main():
+    """Run the robot and guarantee cleanup for every exit path."""
+    try:
+        _run_main()
+    except KeyboardInterrupt:
+        print("Stopped by user.")
+    finally:
+        cleanup_hardware()
+
+
 if __name__ == "__main__":
     main()
 
