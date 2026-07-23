@@ -9,8 +9,10 @@ from trajectory.builder import TrajectoryBuilder
 from main.support import calibrate_gyro
 from config import DT_S
 
+
 TEST_DUTY = 0.30
 TEST_SPEED = 0.25
+
 
 steer_path_s = 0.0
 
@@ -219,9 +221,9 @@ def take_step(car, robot, theta):
 
     return steering_deg
 
-
 def main():
     global state
+
 
     # --------------------------------------------------------
     # Initialize everything
@@ -268,8 +270,6 @@ def main():
 
     last_time = time.monotonic()
 
-    straight_initialized = False
-
     while state == State.RUNNING:
         
         now = time.monotonic()
@@ -293,6 +293,7 @@ def main():
         )
     
     
+
 #bezier curve to move towards the pillar, also take a distance from the pillar to avoid collision.  
 #def calculate_trajectory_to_pillar(): 
         
@@ -329,6 +330,7 @@ def main():
 #the trick after lap 2
 #def special_trick():
     
-    
+if __name__ == "__main__":
+    main()
     
 
