@@ -211,7 +211,7 @@ def take_step(car, robot, theta):
     car.set_steering(0)
     car.set_motor('f', 0.30)
 
-def main_old():
+def main():
     global state
 
 
@@ -283,35 +283,6 @@ def main_old():
             f"steering={steering:+6.2f}°"
         )
     
-
-def main():
-
-    (
-        start_button,
-        leds,
-        encoders,
-        color,
-        car,
-        robot,
-        ekf
-    ) = initialize_hardware()
-
-    try:
-        # Center the steering ONCE
-        car.set_steering(0)
-
-        print("Steering centered.")
-        time.sleep(1)
-
-        # Start only the motor
-        print("Motor starting at 35% power.")
-        car.set_motor('f', 0.35)
-
-        time.sleep(3)
-
-    finally:
-        car.stop()
-        print("Motor stopped.")
 if __name__ == "__main__":
     main()
 
