@@ -11,7 +11,7 @@ from config import DT_S
 
 
 TEST_DUTY = 0.30
-TEST_SPEED = 0.5
+TEST_SPEED = 0.7
 CORNER_DUTY = 0.30
 
 steer_path_s = 0.0
