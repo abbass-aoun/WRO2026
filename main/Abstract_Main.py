@@ -208,13 +208,8 @@ def calculate_straight_steering(theta):
     return steering_deg
 
 def take_step(car, robot, theta):
-    steering_deg = calculate_straight_steering(theta)
-
-    robot.update_steering(steering_deg)
-
-    car.set_steering(steering_deg)
-
-    return steering_deg
+    car.set_steering(0)
+    car.set_motor('f', 0.30)
 
 def main():
     global state
