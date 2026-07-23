@@ -297,27 +297,24 @@ def main():
     ) = initialize_hardware()
 
     try:
-        # Servo test: center and hold
-        car.stop()
+        # Center the steering ONCE
         car.set_steering(0)
 
-        print("Servo centered. Waiting 5 seconds...")
-        time.sleep(5)
+        print("Steering centered.")
+        time.sleep(1)
 
-        # Motor test
-        print("Starting motor...")
-        car.set_motor('f', 0.40)
+        # Start only the motor
+        print("Motor starting at 35% power.")
+        car.set_motor('f', 0.35)
 
         time.sleep(3)
 
     finally:
         car.stop()
-        print("Stopped.")
-
-
+        print("Motor stopped.")
 if __name__ == "__main__":
     main()
-    
+
 #bezier curve to move towards the pillar, also take a distance from the pillar to avoid collision.  
 #def calculate_trajectory_to_pillar(): 
         
