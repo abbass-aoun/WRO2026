@@ -211,7 +211,7 @@ def take_step(car, robot, theta):
     car.set_steering(0)
     car.set_motor('f', 0.30)
 
-def main():
+def main_old():
     global state
 
 
@@ -259,7 +259,7 @@ def main():
     encoders.reset()
 
     last_time = time.monotonic()
-
+    
     while state == State.RUNNING:
         
         now = time.monotonic()
@@ -274,17 +274,50 @@ def main():
             dt,
             gyro_bias
         )
-
-        take_step(car, robot, theta)
+        
+        steering = take_step(car, robot, theta)
         print(
             f"theta={math.degrees(theta):+6.2f}° | "
             f"omega = {math.degrees(omega):+.2f} deg/s | "
-            # f"target={math.degrees(target_theta):+6.2f}° | "
-            # f"steering={steering:+6.2f}°"
+            f"target={math.degrees(target_theta):+6.2f}° | "
+            f"steering={steering:+6.2f}°"
         )
     
-    
 
+def main():
+
+    (
+        start_button,
+        leds,
+        encoders,
+        color,
+        car,
+        robot,
+        ekf
+    ) = initialize_hardware()
+
+    try:
+        # Servo test: center and hold
+        car.stop()
+        car.set_steering(0)
+
+        print("Servo centered. Waiting 5 seconds...")
+        time.sleep(5)
+
+        # Motor test
+        print("Starting motor...")
+        car.set_motor('f', 0.40)
+
+        time.sleep(3)
+
+    finally:
+        car.stop()
+        print("Stopped.")
+
+
+if __name__ == "__main__":
+    main()
+    
 #bezier curve to move towards the pillar, also take a distance from the pillar to avoid collision.  
 #def calculate_trajectory_to_pillar(): 
         
@@ -321,7 +354,6 @@ def main():
 #the trick after lap 2
 #def special_trick():
     
-if __name__ == "__main__":
-    main()
+
     
 
