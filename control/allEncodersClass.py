@@ -25,7 +25,7 @@ TUNING:
     wheel_circ_cm  : measure the wheel circumference (π × diameter). TUNE ON REAL ROBOT.
 
 NOTE ON IMU AXIS:
-    get_yaw_rate() reads and negates gyro['x'] from the MPU-6050.
+    get_yaw_rate() reads gyro['x'] from the MPU-6050.
     IMU is mounted with X axis pointing UP (accel x ≈ +9.8 m/s²), so X = yaw.
     The returned value is in rad/s (already converted from deg/s).
 
@@ -190,9 +190,7 @@ class RobotEncoders:
             return 0.0
         try:
             gyro = self._imu.get_gyro_data()   # deg/s
-            # This mounting reports physical CW rotation as positive X. Negate
-            # it to preserve the global convention: CCW positive, CW negative.
-            return -math.radians(gyro['x'])
+            return math.radians(gyro['x'])     # X axis points UP (accel x≈+9.8)
         except OSError:
             return 0.0
 
