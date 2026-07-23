@@ -285,11 +285,12 @@ def main():
             gyro_bias
         )
 
-        steering = take_step(car, robot, theta)
+        # steering = take_step(car, robot, theta)
         print(
             f"theta={math.degrees(theta):+6.2f}° | "
-            f"target={math.degrees(target_theta):+6.2f}° | "
-            f"steering={steering:+6.2f}°"
+            f"omega = {math.degrees(omega):+.2f} deg/s | "
+            # f"target={math.degrees(target_theta):+6.2f}° | "
+            # f"steering={steering:+6.2f}°"
         )
     
     
