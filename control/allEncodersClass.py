@@ -77,10 +77,8 @@ class RobotEncoders:
 
         self._left_count          = 0
         self._right_count         = 0
-        self._left_last_pulse_t   = None
-        self._right_last_pulse_t  = None
-        self._left_period_s       = None
-        self._right_period_s      = None
+        self._left_last_pulse_t   = time()
+        self._right_last_pulse_t  = time()
         self._left_total_dist_cm  = 0.0
         self._right_total_dist_cm = 0.0
 
@@ -103,20 +101,14 @@ class RobotEncoders:
     # ------------------------------------------------------------------
 
     def _on_left_pulse(self) -> None:
-        now = time()
-        if self._left_last_pulse_t is not None:
-            self._left_period_s = now - self._left_last_pulse_t
         self._left_count         += 1
         self._left_total_dist_cm += self._cm_per_pulse
-        self._left_last_pulse_t   = now
+        self._left_last_pulse_t   = time()
 
     def _on_right_pulse(self) -> None:
-        now = time()
-        if self._right_last_pulse_t is not None:
-            self._right_period_s = now - self._right_last_pulse_t
         self._right_count         += 1
         self._right_total_dist_cm += self._cm_per_pulse
-        self._right_last_pulse_t  = now
+        self._right_last_pulse_t  = time()
 
     # ------------------------------------------------------------------
     # Speed
@@ -125,24 +117,14 @@ class RobotEncoders:
     def get_linear_speeds(self) -> tuple:
         """
         Return (v_left, v_right) in cm/s.
-        Speed = cm_per_pulse / time_between_the_last_two_pulses.
+        Speed = cm_per_pulse / time_since_last_pulse.
         If no pulse for > 1 s, speed is considered 0.
         """
         now  = time()
-        left_recent = (
-            self._left_last_pulse_t is not None
-            and now - self._left_last_pulse_t < 1.0
-            and self._left_period_s is not None
-            and self._left_period_s > 0.0
-        )
-        right_recent = (
-            self._right_last_pulse_t is not None
-            and now - self._right_last_pulse_t < 1.0
-            and self._right_period_s is not None
-            and self._right_period_s > 0.0
-        )
-        v_l = self._cm_per_pulse / self._left_period_s if left_recent else 0.0
-        v_r = self._cm_per_pulse / self._right_period_s if right_recent else 0.0
+        dt_l = now - self._left_last_pulse_t
+        dt_r = now - self._right_last_pulse_t
+        v_l  = self._cm_per_pulse / dt_l if dt_l < 1.0 else 0.0
+        v_r  = self._cm_per_pulse / dt_r if dt_r < 1.0 else 0.0
         # Clamp: physically impossible above 150 cm/s — bounce/noise guard
         v_l  = min(v_l, 150.0)
         v_r  = min(v_r, 150.0)
@@ -167,10 +149,9 @@ class RobotEncoders:
         self._right_count         = 0
         self._left_total_dist_cm  = 0.0
         self._right_total_dist_cm = 0.0
-        self._left_last_pulse_t   = None
-        self._right_last_pulse_t  = None
-        self._left_period_s       = None
-        self._right_period_s      = None
+        _far_past = time() - 999.0
+        self._left_last_pulse_t   = _far_past
+        self._right_last_pulse_t  = _far_past
 
 
     # ------------------------------------------------------------------
@@ -193,13 +174,3 @@ class RobotEncoders:
             return math.radians(gyro['x'])     # X axis points UP (accel x≈+9.8)
         except OSError:
             return 0.0
-
-    @property
-    def has_imu(self) -> bool:
-        """True when the MPU-6050 initialized successfully."""
-        return self._imu is not None
-
-    def close(self) -> None:
-        """Release encoder GPIO resources."""
-        self._left_sensor.close()
-        self._right_sensor.close()

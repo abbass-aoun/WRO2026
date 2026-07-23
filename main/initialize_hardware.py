@@ -15,42 +15,6 @@ from config import (
     EKF_R_GYRO_R2,
 )
 
-_hardware = {
-    "start_button": None,
-    "leds": [],
-    "encoders": None,
-    "color": None,
-    "car": None,
-}
-
-
-def cleanup_hardware():
-    """Stop actuators/threads and release every initialized GPIO resource."""
-    car = _hardware["car"]
-    if car is not None:
-        car.close()
-        _hardware["car"] = None
-
-    color = _hardware["color"]
-    if color is not None:
-        color.stop()
-        _hardware["color"] = None
-
-    encoders = _hardware["encoders"]
-    if encoders is not None:
-        encoders.close()
-        _hardware["encoders"] = None
-
-    for led in _hardware["leds"]:
-        led.off()
-        led.close()
-    _hardware["leds"] = []
-
-    start_button = _hardware["start_button"]
-    if start_button is not None:
-        start_button.close()
-        _hardware["start_button"] = None
-
 
 # ============================================================
 # GPIO PINS
@@ -99,8 +63,6 @@ def initialize_hardware():
         ekf
     """
 
-    cleanup_hardware()
-
     # --------------------------------------------------------
     # Start button
     # --------------------------------------------------------
@@ -110,7 +72,6 @@ def initialize_hardware():
         pull_up=False,
         bounce_time=0.05
     )
-    _hardware["start_button"] = start_button
 
 
     # --------------------------------------------------------
@@ -123,7 +84,6 @@ def initialize_hardware():
     led4 = LED(PIN_LED_4)
 
     leds = [led1, led2, led3, led4]
-    _hardware["leds"] = leds
 
     for led in leds:
         led.off()
@@ -137,7 +97,6 @@ def initialize_hardware():
         PIN_ENC_LEFT,
         PIN_ENC_RIGHT
     )
-    _hardware["encoders"] = encoders
 
 
     # --------------------------------------------------------
@@ -152,7 +111,6 @@ def initialize_hardware():
         PIN_COLOR_OUT,
         PIN_COLOR_LED
     )
-    _hardware["color"] = color
 
 
     # --------------------------------------------------------
@@ -165,7 +123,6 @@ def initialize_hardware():
         PIN_MOTOR_ENA,
         PIN_SERVO
     )
-    _hardware["car"] = car
 
     # Explicit safe state
     car.stop()
