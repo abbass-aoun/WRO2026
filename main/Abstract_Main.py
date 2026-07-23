@@ -208,16 +208,11 @@ def calculate_straight_steering(theta):
     return steering_deg
 
 def take_step(car, robot, theta):
-
     steering_deg = calculate_straight_steering(theta)
 
     robot.update_steering(steering_deg)
 
-    car.set_all(
-        direction='f',
-        speed=TEST_SPEED,
-        angle=steering_deg
-    )
+    car.set_steering(steering_deg)
 
     return steering_deg
 
@@ -285,7 +280,7 @@ def main():
             gyro_bias
         )
 
-        # steering = take_step(car, robot, theta)
+        take_step(car, robot, theta)
         print(
             f"theta={math.degrees(theta):+6.2f}° | "
             f"omega = {math.degrees(omega):+.2f} deg/s | "
