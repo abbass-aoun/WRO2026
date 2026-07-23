@@ -459,7 +459,10 @@ def corner_step(
     # Ackermann feedforward supplies the steering needed even when the car is
     # exactly on the curve.  The PID term then corrects tracking error.
     curvature = current_trajectory.get_curvature(near_s)
-    feedforward_deg = math.degrees(
+    # The installed steering servo uses negative command for a physical left
+    # turn and positive command for a physical right turn, so hardware steering
+    # is opposite the trajectory curvature convention.
+    feedforward_deg = -math.degrees(
         math.atan(WHEELBASE_CM * curvature)
     )
     steering_deg = feedforward_deg + correction_deg
