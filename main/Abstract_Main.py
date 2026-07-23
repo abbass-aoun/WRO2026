@@ -208,8 +208,18 @@ def calculate_straight_steering(theta):
     return steering_deg
 
 def take_step(car, robot, theta):
-    car.set_steering(0)
-    car.set_motor('f', 0.30)
+
+    steering_deg = calculate_straight_steering(theta)
+
+    robot.update_steering(steering_deg)
+
+    car.set_all(
+        direction='f',
+        speed=TEST_SPEED,
+        angle=steering_deg
+    )
+
+    return steering_deg    
 
 def main():
     global state
@@ -260,28 +270,52 @@ def main():
 
     last_time = time.monotonic()
     
-    while state == State.RUNNING:
-        
-        now = time.monotonic()
-        dt = now - last_time
-        last_time = now
+    try:
 
-        speed, v_l, v_r, omega, x, y, theta, orange_seen, blue_seen = read_sensors_and_update_ekf(
-            encoders,
-            color,
-            ekf,
-            robot,
-            dt,
-            gyro_bias
-        )
-        
-        steering = take_step(car, robot, theta)
-        print(
-            f"theta={math.degrees(theta):+6.2f}° | "
-            f"omega = {math.degrees(omega):+.2f} deg/s | "
-            f"target={math.degrees(target_theta):+6.2f}° | "
-            f"steering={steering:+6.2f}°"
-        )
+        while state == State.RUNNING:
+
+            now = time.monotonic()
+            dt = now - last_time
+            last_time = now
+
+            (
+                speed,
+                v_l,
+                v_r,
+                omega,
+                x,
+                y,
+                theta,
+                orange_seen,
+                blue_seen
+            ) = read_sensors_and_update_ekf(
+                encoders,
+                color,
+                ekf,
+                robot,
+                dt,
+                gyro_bias
+            )
+
+            steering = take_step(
+                car,
+                robot,
+                theta
+            )
+
+            print(
+                f"theta={math.degrees(theta):+6.2f}° | "
+                f"target={math.degrees(target_theta):+6.2f}° | "
+                f"steering={steering:+6.2f}°"
+            )
+
+    finally:
+
+        car.stop()
+        color.stop()
+
+        for led in leds:
+            led.off()
     
 if __name__ == "__main__":
     main()
