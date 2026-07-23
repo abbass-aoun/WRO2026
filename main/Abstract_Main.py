@@ -12,7 +12,7 @@ from config import DT_S
 
 TEST_DUTY = 0.30
 TEST_SPEED = 0.5
-
+CORNER_DUTY = 0.30
 
 steer_path_s = 0.0
 
@@ -32,15 +32,27 @@ class DrivingDirection(Enum):
     CCW = auto()
     CW = auto()
 
+class SectionState(Enum):
+    STRAIGHT = auto()
+    CORNER = auto()
+
 
 driving_direction = DrivingDirection.UNKNOWN
 state = State.WAITING
+section_state = SectionState.STRAIGHT
+
+corner_initialized = False
+current_trajectory = None
+near_s = 0.0
+
+_last_transition_time = 0.0
+
+finish_entry_x = None
+finish_entry_y = None
 
 corners_completed = 0 # Number of 90-degree corners that have been COMPLETED.
+laps = 0
 INITIAL_THETA = 0.0  # radians (The robot starts facing along the global +X axis).
-
-straight_ref_x = None
-straight_ref_y = None
 target_theta = 0.0
 
 HEADING_DEADBAND_RAD = math.radians(1.0)
@@ -56,7 +68,8 @@ from config import(
     PID_KD,
     PID_WINDUP_LIM,
     PID_HEADING_W,
-    SERVO_MAX_DEG
+    SERVO_MAX_DEG,
+    CORNER_RADIUS_CM
 )
 
 straight_pid = PIDController(
@@ -124,6 +137,125 @@ def read_sensors_and_update_ekf(encoders, color, ekf, robot, dt, gyro_bias):
 
     # 5. Color flags (background thread — instant read)
     return speed, v_l, v_r, omega, x, y, theta, color.orange_seen, color.blue_seen
+
+
+DEBOUNCE_S = 0.3
+
+
+def add_section(orange_seen, blue_seen):
+    global driving_direction
+    global section_state
+    global corners_completed
+    global laps
+    global corner_initialized
+    global current_trajectory
+    global near_s
+    global _last_transition_time
+
+    if state != State.RUNNING:
+        return None
+
+    if not (orange_seen or blue_seen):
+        return None
+
+    now = time.monotonic()
+
+    if now - _last_transition_time < DEBOUNCE_S:
+        return None
+
+
+    # --------------------------------------------
+    # First line determines driving direction
+    # --------------------------------------------
+
+    if driving_direction == DrivingDirection.UNKNOWN:
+
+        if blue_seen and not orange_seen:
+            driving_direction = DrivingDirection.CCW
+            print("Direction detected: CCW")
+
+        elif orange_seen and not blue_seen:
+            driving_direction = DrivingDirection.CW
+            print("Direction detected: CW")
+
+        else:
+            return None
+
+
+    cw = driving_direction == DrivingDirection.CW
+    ccw = driving_direction == DrivingDirection.CCW
+
+
+    # --------------------------------------------
+    # STRAIGHT -> CORNER
+    # --------------------------------------------
+
+    if section_state == SectionState.STRAIGHT:
+
+        entering_corner = (
+            (cw and orange_seen)
+            or
+            (ccw and blue_seen)
+        )
+
+        if entering_corner:
+
+            section_state = SectionState.CORNER
+
+            corner_initialized = False
+            current_trajectory = None
+            near_s = 0.0
+
+            _last_transition_time = now
+
+            print("Entering corner")
+
+            return "ENTER_CORNER"
+
+
+    # --------------------------------------------
+    # CORNER -> STRAIGHT
+    # --------------------------------------------
+
+    elif section_state == SectionState.CORNER:
+
+        exiting_corner = (
+            (cw and blue_seen)
+            or
+            (ccw and orange_seen)
+        )
+
+        if exiting_corner:
+
+            corners_completed += 1
+
+            section_state = SectionState.STRAIGHT
+
+            corner_initialized = False
+            current_trajectory = None
+            near_s = 0.0
+
+            _last_transition_time = now
+
+
+            # Four corners = one complete lap
+            if corners_completed >= 4:
+
+                corners_completed = 0
+                laps += 1
+
+                print(f"Lap completed: {laps}/3")
+
+            else:
+
+                print(
+                    f"Corner completed: "
+                    f"{corners_completed}/4"
+                )
+
+            return "EXIT_CORNER"
+
+    return None
 
 
 def initialize_straight_reference(x, y):
@@ -230,13 +362,151 @@ def take_step(car, robot, theta):
 
     return steering_deg    
 
+
+def corner_step(
+    car,
+    robot,
+    x,
+    y,
+    theta,
+    steering_pid
+):
+    global current_trajectory
+    global near_s
+    global corner_initialized
+
+
+    # --------------------------------------------
+    # Build corner trajectory ONCE
+    # --------------------------------------------
+
+    if not corner_initialized:
+
+        if driving_direction == DrivingDirection.CCW:
+            turn_dir = +1
+        else:
+            turn_dir = -1
+
+        current_trajectory = TrajectoryBuilder.corner(
+            start_x=x,
+            start_y=y,
+            start_theta=theta,
+            turn_direction=turn_dir,
+            radius=CORNER_RADIUS_CM
+        )
+
+        near_s = 0.0
+        corner_initialized = True
+
+        steering_pid.reset()
+
+        print("Corner trajectory created")
+
+
+    # --------------------------------------------
+    # Find robot's closest point on curve
+    # --------------------------------------------
+
+    near_s = current_trajectory.find_closest(
+        x,
+        y,
+        near_s
+    )
+
+    px, py = current_trajectory.get_point(near_s)
+
+    tx, ty = current_trajectory.get_tangent(near_s)
+
+
+    # --------------------------------------------
+    # Calculate trajectory errors
+    # --------------------------------------------
+
+    path_theta = math.atan2(ty, tx)
+
+    cross_track_error = (
+        -math.sin(path_theta) * (x - px)
+        + math.cos(path_theta) * (y - py)
+    )
+
+    heading_error = normalize_angle(
+        theta - path_theta
+    )
+
+    combined_error = (
+        cross_track_error
+        + PID_HEADING_W * heading_error
+    )
+
+
+    # --------------------------------------------
+    # Steering
+    # --------------------------------------------
+
+    steering_deg = steering_pid._compute(
+        combined_error
+    )
+
+    steering_deg = max(
+        -SERVO_MAX_DEG,
+        min(SERVO_MAX_DEG, steering_deg)
+    )
+
+
+    robot.update_steering(steering_deg)
+
+    car.set_all(
+        direction='f',
+        speed=CORNER_DUTY,
+        angle=steering_deg
+    )
+
+    return steering_deg
+
+
+def reset_race():
+    global driving_direction
+    global section_state
+    global state
+    global corners_completed
+    global laps
+    global target_theta
+    global corner_initialized
+    global current_trajectory
+    global near_s
+    global _last_transition_time
+    global finish_entry_x
+    global finish_entry_y
+
+    driving_direction = DrivingDirection.UNKNOWN
+
+    section_state = SectionState.STRAIGHT
+
+    state = State.WAITING
+
+    corners_completed = 0
+    laps = 0
+
+    target_theta = INITIAL_THETA
+
+    corner_initialized = False
+    current_trajectory = None
+    near_s = 0.0
+
+    _last_transition_time = 0.0
+
+    finish_entry_x = None
+    finish_entry_y = None
+
+    straight_pid.reset()
+
+
 def main():
     global state
+    global finish_entry_x
+    global finish_entry_y
 
-
-    # --------------------------------------------------------
-    # Initialize everything
-    # --------------------------------------------------------
+    reset_race()
 
     (
         start_button,
@@ -246,29 +516,20 @@ def main():
         car,
         robot,
         ekf
-
     ) = initialize_hardware()
 
 
-    # --------------------------------------------------------
-    # Calibrate gyro while robot is stationary
-    # --------------------------------------------------------
-
+    # Robot must remain still
     gyro_bias = calibrate_gyro(encoders)
 
-    # --------------------------------------------------------
-    # Wait for physical start button
-    # --------------------------------------------------------
 
     wait_for_start(
         start_button,
         leds
     )
 
-    # --------------------------------------------------------
-    # Start coordinate system
-    # --------------------------------------------------------
 
+    # Global coordinate origin
     ekf.initialize(
         x0=0.0,
         y0=0.0,
@@ -276,16 +537,27 @@ def main():
     )
 
     encoders.reset()
+    robot.reset()
+
+    # First straight is +X
+    update_target_theta()
 
     last_time = time.monotonic()
-    
+
+
     try:
 
         while state == State.RUNNING:
-            
+
             now = time.monotonic()
+
             dt = now - last_time
             last_time = now
+
+
+            # ==========================================
+            # 1. SENSORS + EKF
+            # ==========================================
 
             (
                 speed,
@@ -297,6 +569,7 @@ def main():
                 theta,
                 orange_seen,
                 blue_seen
+
             ) = read_sensors_and_update_ekf(
                 encoders,
                 color,
@@ -306,33 +579,121 @@ def main():
                 gyro_bias
             )
 
-            steering = take_step(
-                car,
-                robot,
-                theta
+
+            # ==========================================
+            # 2. UPDATE TRACK SECTION
+            # ==========================================
+
+            transition = add_section(
+                orange_seen,
+                blue_seen
             )
 
-            
+
+            # New corner started
+            if transition == "ENTER_CORNER":
+
+                straight_pid.reset()
+
+
+            # Corner finished -> new straight
+            elif transition == "EXIT_CORNER":
+
+                update_target_theta()
+
+                straight_pid.reset()
+
+
+                # Three laps complete:
+                # we have just entered the finish straight.
+                if laps >= 3:
+
+                    finish_entry_x = x
+                    finish_entry_y = y
+
+
+            # ==========================================
+            # 3. FINISH LOGIC
+            # ==========================================
+
+            if (
+                laps >= 3
+                and finish_entry_x is not None
+            ):
+
+                distance_into_finish = math.hypot(
+                    x - finish_entry_x,
+                    y - finish_entry_y
+                )
+
+                if distance_into_finish >= 40.0:
+
+                    print("Finish section reached.")
+
+                    state = State.FINISHED
+
+                    break
+
+
+            # ==========================================
+            # 4. CHOOSE CONTROLLER
+            # ==========================================
+
+            if section_state == SectionState.STRAIGHT:
+
+                steering = take_step(
+                    car,
+                    robot,
+                    theta
+                )
+
+            elif section_state == SectionState.CORNER:
+
+                steering = corner_step(
+                    car,
+                    robot,
+                    x,
+                    y,
+                    theta,
+                    straight_pid
+                )
+
+
+            # ==========================================
+            # 5. DEBUG
+            # ==========================================
+
             print(
-                f"theta={math.degrees(theta):+6.2f}° | "
-                f"target={math.degrees(target_theta):+6.2f}° | "
-                f"steer={steering:+6.2f}° | "
-                f"omega={math.degrees(omega):+6.2f}°/s | "
-                f"vl={v_l:.2f} | vr={v_r:.2f}"
+                f"section={section_state.name} | "
+                f"dir={driving_direction.name} | "
+                f"lap={laps} | "
+                f"corner={corners_completed} | "
+                f"theta={math.degrees(theta):+.1f}° | "
+                f"target={math.degrees(target_theta):+.1f}° | "
+                f"steer={steering:+.1f}°"
             )
-            
+
+
+            # ==========================================
+            # 6. CONTROL LOOP RATE
+            # ==========================================
+
             elapsed = time.monotonic() - now
-            
+
             if elapsed < DT_S:
                 time.sleep(DT_S - elapsed)
+
 
     finally:
 
         car.stop()
+
         color.stop()
 
         for led in leds:
             led.off()
+
+        state = State.FINISHED
     
 if __name__ == "__main__":
     main()
