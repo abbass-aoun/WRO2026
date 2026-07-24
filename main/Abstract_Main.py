@@ -1102,6 +1102,15 @@ def main():
                 theta,
             )
 
+            track = vision_result.get("track_lines", {})
+
+            print(
+                f"TCS: O={orange_seen} B={blue_seen} | "
+                f"pending={pending_line} | "
+                f"CAM O={track.get('orange', {}).get('confirmed_close', False)} | "
+                f"CAM B={track.get('blue', {}).get('confirmed_close', False)}"
+            )
+
             debug_frame = vision.get_latest_frame()
 
             if debug_frame is not None:
@@ -1272,7 +1281,7 @@ def main():
         vision.stop()
         color.stop()
         cv.destroyAllWindows()
-        
+
         for led in leds:
             led.off()
 
