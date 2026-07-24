@@ -80,6 +80,7 @@ class ColorSensor:
             poll_interval: pause between full RGB reads in the background loop.
                            50 ms → ~12 Hz update rate for the boolean flags.
         """
+        self.rgb = (0.0, 0.0, 0.0)
         self._s2  = DigitalOutputDevice(s2)
         self._s3  = DigitalOutputDevice(s3)
         self._out = DigitalInputDevice(out_pin, pull_up=False)
@@ -138,14 +139,24 @@ class ColorSensor:
             g = self._read_channel(*self._GREEN)
             b = self._read_channel(*self._BLUE)
 
+            self.rgb = (r, g, b)
+
             # Orange: R strongly dominant over B and G.
             # Ratio-based so ambient light level doesn't matter.
             # TUNE ON REAL ROBOT if false positives occur.
-            self.orange_seen = (r > 2000 and r > b * 1.5 and r > g * 0.7)
+            self.orange_seen = (
+                r > 2000 
+                and r > b * 1.5 
+                and r > g * 0.7
+            )
 
             # Blue: B strongly dominant over R and G.
             # TUNE ON REAL ROBOT if false positives occur.
-            self.blue_seen   = (b > 2000 and b > r * 1.5 and b > g * 0.7)
+            self.blue_seen   = (
+                b > 2000 
+                and b > r * 1.5 
+                and b > g * 0.7
+            )
 
             sleep(self._poll_interval)
 
@@ -167,27 +178,32 @@ class ColorSensor:
 if __name__ == "__main__":
     import time
 
-    print("TCS3200 live reading — hold sensor over different surfaces.")
+    print("TCS3200 calibration")
+    print("Place sensor over WHITE, ORANGE, and BLUE.")
     print("Press Ctrl+C to stop.\n")
 
     sensor = ColorSensor()
 
-    # Give the background thread one full cycle to warm up
-    time.sleep(0.2)
+    time.sleep(0.5)
 
     try:
         while True:
-            # Read raw counts directly (bypass the boolean flags)
-            r = sensor._read_channel(*ColorSensor._RED)
-            g = sensor._read_channel(*ColorSensor._GREEN)
-            b = sensor._read_channel(*ColorSensor._BLUE)
-            o = sensor.orange_seen
-            bl = sensor.blue_seen
-            print(f"R={r:6.0f}  G={g:6.0f}  B={b:6.0f}  "
-                  f"orange={o}  blue={bl}")
-            time.sleep(0.1)
+
+            r, g, b = sensor.rgb
+
+            print(
+                f"R={r:7.0f}  "
+                f"G={g:7.0f}  "
+                f"B={b:7.0f}  |  "
+                f"orange={sensor.orange_seen}  "
+                f"blue={sensor.blue_seen}"
+            )
+
+            time.sleep(0.2)
+
     except KeyboardInterrupt:
         pass
+
     finally:
         sensor.stop()
-        print("Stopped.")
+        print("\nStopped.")
