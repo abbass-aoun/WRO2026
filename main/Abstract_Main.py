@@ -9,22 +9,17 @@ from trajectory.builder import TrajectoryBuilder
 from main.support import calibrate_gyro
 from config import DT_S
 
-
-TEST_DUTY = 0.30
-TEST_SPEED = 0.7
-CORNER_DUTY = 0.30
-
-steer_path_s = 0.0
-
 from main.initialize_hardware import initialize_hardware
 
 #-----------------------------------------------------------
 # States of the robot
 #-----------------------------------------------------------
+
 class State(Enum):
     WAITING = auto()
     RUNNING = auto()
     FINISHED = auto()
+
 #-----------------------------------------------------------
 
 class DrivingDirection(Enum):
@@ -32,10 +27,16 @@ class DrivingDirection(Enum):
     CCW = auto()
     CW = auto()
 
+#-----------------------------------------------------------
+
 class SectionState(Enum):
     STRAIGHT = auto()
     CORNER = auto()
 
+#-----------------------------------------------------------
+
+TEST_SPEED = 0.35
+CORNER_DUTY = 0.30
 
 driving_direction = DrivingDirection.UNKNOWN
 state = State.WAITING
@@ -45,7 +46,6 @@ corner_initialized = False
 current_trajectory = None
 near_s = 0.0
 
-_last_transition_time = 0.0
 
 finish_entry_x = None
 finish_entry_y = None
@@ -53,9 +53,12 @@ finish_entry_y = None
 corners_completed = 0 # Number of 90-degree corners that have been COMPLETED.
 laps = 0
 INITIAL_THETA = 0.0  # radians (The robot starts facing along the global +X axis).
-target_theta = 0.0
+target_theta = 0.0 
 
-HEADING_DEADBAND_RAD = math.radians(1.0)
+HEADING_DEADBAND_RAD = math.radians(1.0) # minimum error in heading direction for correction (reduces switches and movement in servo)
+
+DEBOUNCE_S = 0.3 # time between section transitions
+_last_transition_time = 0.0 # last time where we transitioned between corner and straight section
 
 #-----------------------------------------------------------
 # Initializing PID controller
@@ -137,9 +140,6 @@ def read_sensors_and_update_ekf(encoders, color, ekf, robot, dt, gyro_bias):
 
     # 5. Color flags (background thread — instant read)
     return speed, v_l, v_r, omega, x, y, theta, color.orange_seen, color.blue_seen
-
-
-DEBOUNCE_S = 0.3
 
 
 def add_section(orange_seen, blue_seen):
@@ -698,40 +698,20 @@ def main():
 if __name__ == "__main__":
     main()
 
-#bezier curve to move towards the pillar, also take a distance from the pillar to avoid collision.  
-#def calculate_trajectory_to_pillar(): 
-        
-#def see_wall():
-    
+            
 #This method calculates the nearest distance from the robot to the curve
 
 #this method will update the local reference to the current position
 #def  update_reference():#transformation matrix
-    
-#This method should drive the robot 1 step according to the saved trajectory
-#def take_step():
-       
-       
-#def see_pillar():
-    
-#this is the a cv part,maybe more than one function.
-#def process_data(vision):           
-
-#this is to count, sections, laps and corners.
-#def add_Section():    
-    
+           
 #decides if the robot should stop in this section or not, based on the number of sections and laps
 #def stop_in_this_section():    
     
   
 #def parking():
     
-#if we start with the parking lot, we need to drive out
-
 #def exit_parking_lot():
     
-
-#the trick after lap 2
 #def special_trick():
     
 

@@ -477,26 +477,6 @@ def draw_detections(frame, detections):
     return output_frame
 
 
-def get_required_pass_side(color_name):
-    """
-    Converts pillar color into the required passing side.
-
-    Args:
-        color_name: Color of the detected pillar.
-    
-    Returns:
-        required_pass_side
-    """
-
-    if color_name == "red":
-        return "left"
-    
-    if color_name == "green":
-        return "right"
-    
-    return "unknown"
-
-
 def select_primary_detection(detections):
     """
     Selects the most important detection for navigation.
@@ -535,53 +515,6 @@ def select_primary_detection(detections):
     )
 
     return primary_detection
-
-
-def create_navigation_output(detections):
-    """
-    Creates a navigation output from the current pillar detections.
-
-    Args:
-        detections: List of accepted pillar detections.
-
-    Returns:
-        navigation_output: Dictionary describing the recommended navigation meaning.
-    """
-
-    primary_detection = select_primary_detection(detections)
-
-    if primary_detection is None:
-        return {
-            "action": "continue_normal_driving",
-            "reason": "no_reliable_pillar",
-            "pillar_color": None,
-            "required_pass_side": None,
-            "estimated_distance_mm": None,
-            "angle_deg": None,
-            "relative_x_mm": None,
-            "relative_y_mm": None,
-            "confidence": 0.0
-        }
-    
-    color_name = primary_detection["color"]
-    required_pass_side = get_required_pass_side(color_name)
-
-    navigation_output = {
-        "action": "avoid_pillar",
-        "reason": "reliable_pillar_detected",
-        "pillar_color": color_name,
-        "required_pass_side": required_pass_side,
-        "estimated_distance_mm": primary_detection["estimated_distance_mm"],
-        "angle_deg": primary_detection["angle_deg"],
-        "relative_x_mm": primary_detection["relative_x_mm"],
-        "relative_y_mm": primary_detection["relative_y_mm"],
-        "confidence": primary_detection["confidence"],
-        "center_x": primary_detection["center_x"],
-        "center_y": primary_detection["center_y"],
-        "area": primary_detection["area"],
-    }
-
-    return navigation_output
 
 
 def detect_parking_markers(mask, frame_width):
@@ -1143,3 +1076,97 @@ def draw_wall_slices(frame, wall_slices, wall_output):
         )
 
     return output_frame
+
+
+def process_image(frame):
+    """
+    Processes one camera frame and returns all useful visual information.
+
+    Args:
+        frame:
+            BGR image captured from the camera.
+
+    Returns:
+        vision_result:
+            Dictionary containing:
+            - all detected pillars
+            - summarized parking information
+            - summarized wall information
+    """
+
+    if frame is None:
+        return {
+            "pillars": [],
+            "parking": create_parking_output([]),
+            "walls": create_wall_output([]),
+        }
+
+    # Get frame dimensions once.
+    frame_height, frame_width = frame.shape[:2]
+
+    # Convert BGR -> HSV once.
+    # All color detection uses this same HSV frame.
+    hsv_frame = convert_to_hsv(frame)
+
+    # --------------------------------------------------
+    # 1. PILLAR DETECTION
+    # --------------------------------------------------
+
+    red_mask = create_red_mask(hsv_frame)
+    green_mask = create_green_mask(hsv_frame)
+
+    red_pillars = detect_pillars(
+        red_mask,
+        "red",
+        frame_width,
+    )
+
+    green_pillars = detect_pillars(
+        green_mask,
+        "green",
+        frame_width,
+    )
+
+    # We want ALL visible pillars.
+    pillars = red_pillars + green_pillars
+
+    # --------------------------------------------------
+    # 2. PARKING DETECTION
+    # --------------------------------------------------
+
+    pink_mask = create_pink_mask(hsv_frame)
+
+    parking_markers = detect_parking_markers(
+        pink_mask,
+        frame_width,
+    )
+
+    # Convert raw marker detections into useful
+    # parking-slot information.
+    parking = create_parking_output(parking_markers)
+
+    # --------------------------------------------------
+    # 3. WALL DETECTION
+    # --------------------------------------------------
+
+    black_mask = create_black_wall_mask(hsv_frame)
+
+    wall_slices = detect_wall_slices(
+        black_mask,
+        frame_width,
+        frame_height,
+    )
+
+    # Convert many raw wall slices into useful information
+    # about the nearest left/front/right walls.
+    walls = create_wall_output(wall_slices)
+
+    # --------------------------------------------------
+    # 4. RETURN COMPLETE VISION SNAPSHOT
+    # --------------------------------------------------
+
+    return {
+        "pillars": pillars,
+        "parking": parking,
+        "walls": walls,
+    }
