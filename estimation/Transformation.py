@@ -1,27 +1,53 @@
 import math
 
-class Robot:
-    # ... existing x, y, theta, speed, steer_angle attributes ...
 
-    def local_to_world(self, x_rel_cm: float, y_rel_cm: float) -> tuple[float, float]:
-        """
-        Convert a point given relative to the robot (x_rel = forward,
-        y_rel = left, both in cm, robot-frame) into world coordinates,
-        using the robot's current pose (self.x, self.y, self.theta).
+def camera_to_world(
+    robot_x_cm: float,
+    robot_y_cm: float,
+    robot_theta_rad: float,
+    relative_x_mm: float,
+    relative_y_mm: float,
+) -> tuple[float, float]:
+    """
+    Convert camera-relative CV coordinates to global coordinates.
 
-        This is the SE(2) homogeneous transform:
+    CV convention:
+        relative_x_mm:
+            positive = right
+            negative = left
 
-            [x_world]   [cos(theta)  -sin(theta)   x][x_rel]
-            [y_world] = [sin(theta)   cos(theta)   y][y_rel]
-            [   1   ]   [    0            0        1][  1  ]
+        relative_y_mm:
+            positive = forward
 
-        i.e. rotate the relative offset by the robot's heading, then
-        translate by the robot's world position.
-        """
-        cos_t = math.cos(self.theta)
-        sin_t = math.sin(self.theta)
+    Global convention:
+        x, y in cm
+        theta = 0 faces global +X
+        positive theta = CCW
+    """
 
-        x_world = self.x + x_rel_cm * cos_t - y_rel_cm * sin_t
-        y_world = self.y + x_rel_cm * sin_t + y_rel_cm * cos_t
+    # Convert mm -> cm
+    right_cm = relative_x_mm / 10.0
+    forward_cm = relative_y_mm / 10.0
 
-        return x_world, y_world
+    cos_t = math.cos(robot_theta_rad)
+    sin_t = math.sin(robot_theta_rad)
+
+    # Forward direction in world coordinates:
+    # (cos(theta), sin(theta))
+    #
+    # Right direction in world coordinates:
+    # (sin(theta), -cos(theta))
+
+    global_x = (
+        robot_x_cm
+        + forward_cm * cos_t
+        + right_cm * sin_t
+    )
+
+    global_y = (
+        robot_y_cm
+        + forward_cm * sin_t
+        - right_cm * cos_t
+    )
+
+    return global_x, global_y

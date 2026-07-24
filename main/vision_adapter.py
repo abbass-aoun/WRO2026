@@ -4,6 +4,7 @@ import threading
 from cv.camera import open_camera, read_frame, release_camera
 from cv.vision import process_image
 from cv.config import TRACK_LINE_CONFIRM_FRAMES
+from estimation.Transformation import camera_to_world
 
 class VisionThread:
 
@@ -98,14 +99,68 @@ def transform_to_global(
     robot_theta,
 ):
     """
-    Add global coordinates to vision detections.
+    Add global coordinates to detected pillars and parking.
 
-    The actual local_to_global() transformation
-    will be provided separately.
+    Original camera-relative coordinates are preserved.
     """
 
     result = copy.deepcopy(vision_result)
 
-    # Transformation will be added here.
+    # ----------------------------------------
+    # Pillars
+    # ----------------------------------------
+
+    for pillar in result["pillars"]:
+
+        relative_x_mm = pillar.get("relative_x_mm")
+        relative_y_mm = pillar.get("relative_y_mm")
+
+        if relative_x_mm is None or relative_y_mm is None:
+            pillar["global_x_cm"] = None
+            pillar["global_y_cm"] = None
+            continue
+
+        
+        global_x, global_y = camera_to_world(
+            robot_x,
+            robot_y,
+            robot_theta,
+            relative_x_mm,
+            relative_y_mm
+        )
+
+        pillar["global_x_cm"] = global_x
+        pillar["global_y_cm"] = global_y
+
+    # ----------------------------------------
+    # Parking slot center
+    # ----------------------------------------
+
+    parking = result.get("parking", {})
+
+    relative_x_mm = parking.get(
+        "slot_center_relative_x_mm"
+    )
+
+    relative_y_mm = parking.get(
+        "slot_center_relative_y_mm"
+    )
+
+    if relative_x_mm is not None and relative_y_mm is not None:
+
+        global_x, global_y = camera_to_world(
+            robot_x,
+            robot_y,
+            robot_theta,
+            relative_x_mm,
+            relative_y_mm
+        )
+
+        parking["slot_center_global_x_cm"] = global_x
+        parking["slot_center_global_y_cm"] = global_y
+
+    else:
+        parking["slot_center_global_x_cm"] = None
+        parking["slot_center_global_y_cm"] = None
 
     return result

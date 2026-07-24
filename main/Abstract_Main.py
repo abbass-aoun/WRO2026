@@ -8,7 +8,7 @@ from trajectory.builder import TrajectoryBuilder
 
 from main.support import calibrate_gyro
 from config import DT_S
-from main.vision_adapter import VisionThread
+from main.vision_adapter import VisionThread, transform_to_global
 from main.initialize_hardware import initialize_hardware
 
 #-----------------------------------------------------------
@@ -726,14 +726,21 @@ def main():
                 gyro_bias
             )
 
-
             # ==========================================
             # 2. UPDATE TRACK SECTION
             # ==========================================
             
-            # Camera PRE-CONFIRMATION
+            
             vision_result = vision.get_latest_result()
 
+            vision_result = transform_to_global(
+                vision_result,
+                x,
+                y,
+                theta,
+            )
+
+            # Camera PRE-CONFIRMATION
             update_pending_line_from_camera(
                 vision_result,
                 x,
@@ -868,12 +875,8 @@ if __name__ == "__main__":
             
 #This method calculates the nearest distance from the robot to the curve
 
-#this method will update the local reference to the current position
-#def  update_reference():#transformation matrix
-           
 #decides if the robot should stop in this section or not, based on the number of sections and laps
-#def stop_in_this_section():    
-    
+#def stop_in_this_section():        
   
 #def parking():
     
