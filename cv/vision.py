@@ -2,7 +2,7 @@ import cv2 as cv
 import numpy as np
 import math
 
-from config import(
+from cv.config import(
     LOWER_RED_1,
     MIN_WALL_SLICE_DENSITY,
     UPPER_RED_1,
