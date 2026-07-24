@@ -32,7 +32,7 @@ class myServo:
     """
 
     def __init__(self, servo_pin: int,
-                 center_angle: int = 50,
+                 center_angle: int = 80,
                  max_deviation: int = 27):
         """
         Args:
