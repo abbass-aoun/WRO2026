@@ -8,7 +8,7 @@ from trajectory.builder import TrajectoryBuilder
 
 from main.support import calibrate_gyro
 from config import DT_S
-
+from main.vision_adapter import VisionThread
 from main.initialize_hardware import initialize_hardware
 
 #-----------------------------------------------------------
@@ -59,6 +59,20 @@ HEADING_DEADBAND_RAD = math.radians(1.0) # minimum error in heading direction fo
 
 DEBOUNCE_S = 0.3 # time between section transitions
 _last_transition_time = 0.0 # last time where we transitioned between corner and straight section
+
+pending_line = None
+pending_line_x = None
+pending_line_y = None
+
+# Maximum distance robot may travel between camera confirmation
+# and floor-sensor detection.
+#
+# CALIBRATE based on:
+# - camera position
+# - color sensor position
+# - where TRACK_LINE_NEAR_Y_RATIO is set.
+LINE_ARM_MAX_TRAVEL_CM = 50.0
+
 
 #-----------------------------------------------------------
 # Initializing PID controller
@@ -140,6 +154,130 @@ def read_sensors_and_update_ekf(encoders, color, ekf, robot, dt, gyro_bias):
 
     # 5. Color flags (background thread — instant read)
     return speed, v_l, v_r, omega, x, y, theta, color.orange_seen, color.blue_seen
+
+
+def update_pending_line_from_camera(
+    vision_result,
+    robot_x,
+    robot_y,
+):
+    """
+    Arm a line once the camera has reliably confirmed that
+    the line is close ahead.
+
+    The line remains armed even after it disappears from
+    the camera because it may become hidden by the robot.
+    """
+
+    global pending_line
+    global pending_line_x
+    global pending_line_y
+
+    track_lines = vision_result.get("track_lines")
+
+    if not track_lines:
+        return
+
+    orange_confirmed = (
+        track_lines["orange"]
+        .get("confirmed_close", False)
+    )
+
+    blue_confirmed = (
+        track_lines["blue"]
+        .get("confirmed_close", False)
+    )
+
+    # Ambiguous camera result.
+    if orange_confirmed and blue_confirmed:
+        return
+
+    if orange_confirmed:
+
+        # Arm only if nothing is already pending.
+        if pending_line is None:
+            pending_line = "orange"
+            pending_line_x = robot_x
+            pending_line_y = robot_y
+
+            print("Camera armed ORANGE line")
+
+    elif blue_confirmed:
+
+        if pending_line is None:
+            pending_line = "blue"
+            pending_line_x = robot_x
+            pending_line_y = robot_y
+
+            print("Camera armed BLUE line")
+
+
+def confirm_floor_line(
+    orange_seen,
+    blue_seen,
+    robot_x,
+    robot_y,
+):
+    """
+    Confirm a TCS3200 line detection only if the camera
+    previously armed the same line nearby.
+
+    Returns:
+        confirmed_orange
+        confirmed_blue
+    """
+
+    global pending_line
+    global pending_line_x
+    global pending_line_y
+
+    if pending_line is None:
+        return False, False
+
+    distance_travelled = math.hypot(
+        robot_x - pending_line_x,
+        robot_y - pending_line_y,
+    )
+
+    # Camera confirmation is now too old spatially.
+    if distance_travelled > LINE_ARM_MAX_TRAVEL_CM:
+
+        print(
+            f"Expired pending {pending_line} line "
+            f"after {distance_travelled:.1f} cm"
+        )
+
+        pending_line = None
+        pending_line_x = None
+        pending_line_y = None
+
+        return False, False
+
+    confirmed_orange = (
+        orange_seen
+        and not blue_seen
+        and pending_line == "orange"
+    )
+
+    confirmed_blue = (
+        blue_seen
+        and not orange_seen
+        and pending_line == "blue"
+    )
+
+    if confirmed_orange or confirmed_blue:
+
+        print(
+            f"Confirmed {pending_line} line "
+            f"after {distance_travelled:.1f} cm"
+        )
+
+        # Consume the pending line.
+        pending_line = None
+        pending_line_x = None
+        pending_line_y = None
+
+    return confirmed_orange, confirmed_blue
 
 
 def add_section(orange_seen, blue_seen):
@@ -477,6 +615,9 @@ def reset_race():
     global _last_transition_time
     global finish_entry_x
     global finish_entry_y
+    global pending_line
+    global pending_line_x
+    global pending_line_y
 
     driving_direction = DrivingDirection.UNKNOWN
 
@@ -498,6 +639,10 @@ def reset_race():
     finish_entry_x = None
     finish_entry_y = None
 
+    pending_line = None
+    pending_line_x = None
+    pending_line_y = None
+
     straight_pid.reset()
 
 
@@ -518,6 +663,8 @@ def main():
         ekf
     ) = initialize_hardware()
 
+    vision = VisionThread()
+    vision.start()
 
     # Robot must remain still
     gyro_bias = calibrate_gyro(encoders)
@@ -583,10 +730,30 @@ def main():
             # ==========================================
             # 2. UPDATE TRACK SECTION
             # ==========================================
+            
+            # Camera PRE-CONFIRMATION
+            vision_result = vision.get_latest_result()
 
+            update_pending_line_from_camera(
+                vision_result,
+                x,
+                y,
+            )
+            
+            # FLOOR SENSOR + CAMERA FUSION
+            confirmed_orange, confirmed_blue = (
+                confirm_floor_line(
+                    orange_seen,
+                    blue_seen,
+                    x,
+                    y,
+                )
+            )
+
+            # SECTION UPDATE
             transition = add_section(
-                orange_seen,
-                blue_seen
+                confirmed_orange,
+                confirmed_blue
             )
 
 
@@ -687,7 +854,7 @@ def main():
     finally:
 
         car.stop()
-
+        vision.stop()
         color.stop()
 
         for led in leds:

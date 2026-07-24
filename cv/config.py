@@ -143,3 +143,38 @@ RIGHT_WALL_ZONE_RATIO = 0.65
 
 # Confidence threshold.
 MIN_WALL_CONFIDENCE = 0.35
+
+
+# ============================================================
+# TRACK LINE DETECTION
+# ============================================================
+
+# Starting HSV ranges only.
+# Tune using real camera images of the competition mat.
+
+# Orange
+LOWER_ORANGE = (5, 100, 100)
+UPPER_ORANGE = (25, 255, 255)
+
+# Blue
+LOWER_BLUE = (90, 80, 60)
+UPPER_BLUE = (135, 255, 255)
+
+# Ignore very small colored blobs.
+MIN_TRACK_LINE_AREA = 500
+
+# A real diagonal line should occupy a meaningful width.
+MIN_TRACK_LINE_WIDTH = 40
+
+# A line is considered "close" when its lowest visible point
+# reaches this fraction of the image height.
+#
+# Example:
+# 0.70 means lower 30% of image is the near/arming zone.
+#
+# CALIBRATE THIS ON THE REAL ROBOT.
+TRACK_LINE_NEAR_Y_RATIO = 0.70
+
+# Number of consecutive CAMERA FRAMES required before
+# trusting that a nearby line is real.
+TRACK_LINE_CONFIRM_FRAMES = 3

@@ -43,6 +43,13 @@ from config import(
     LEFT_WALL_ZONE_RATIO,
     RIGHT_WALL_ZONE_RATIO,
     MIN_WALL_CONFIDENCE,
+    LOWER_ORANGE,
+    UPPER_ORANGE,
+    LOWER_BLUE,
+    UPPER_BLUE,
+    MIN_TRACK_LINE_AREA,
+    MIN_TRACK_LINE_WIDTH,
+    TRACK_LINE_NEAR_Y_RATIO,
 )
 
 
@@ -139,6 +146,24 @@ def create_black_wall_mask(hsv_frame):
     black_mask = clean_mask(black_mask)
 
     return black_mask
+
+
+def create_orange_line_mask(hsv_frame):
+    lower = np.array(LOWER_ORANGE, dtype=np.uint8)
+    upper = np.array(UPPER_ORANGE, dtype=np.uint8)
+
+    mask = cv.inRange(hsv_frame, lower, upper)
+
+    return clean_mask(mask)
+
+
+def create_blue_line_mask(hsv_frame):
+    lower = np.array(LOWER_BLUE, dtype=np.uint8)
+    upper = np.array(UPPER_BLUE, dtype=np.uint8)
+
+    mask = cv.inRange(hsv_frame, lower, upper)
+
+    return clean_mask(mask)
 
 
 def clean_mask(mask):
@@ -1078,6 +1103,99 @@ def draw_wall_slices(frame, wall_slices, wall_output):
     return output_frame
 
 
+def detect_track_line(mask, color_name, frame_height):
+    """
+    Detect the nearest valid orange/blue track line.
+
+    Returns information about whether the line exists and
+    whether it has entered the camera's near/arming zone.
+    """
+
+    contours, _ = cv.findContours(
+        mask,
+        cv.RETR_EXTERNAL,
+        cv.CHAIN_APPROX_SIMPLE,
+    )
+
+    valid_lines = []
+
+    for contour in contours:
+
+        area = cv.contourArea(contour)
+
+        if area < MIN_TRACK_LINE_AREA:
+            continue
+
+        x, y, width, height = cv.boundingRect(contour)
+
+        if width < MIN_TRACK_LINE_WIDTH:
+            continue
+
+        bottom_y = y + height
+
+        valid_lines.append(
+            {
+                "color": color_name,
+                "x": x,
+                "y": y,
+                "width": width,
+                "height": height,
+                "area": area,
+                "bottom_y": bottom_y,
+            }
+        )
+
+    if not valid_lines:
+        return {
+            "detected": False,
+            "close": False,
+            "bottom_y": None,
+            "area": None,
+        }
+
+    # Closest visible line = one extending lowest in image.
+    nearest = max(
+        valid_lines,
+        key=lambda line: line["bottom_y"],
+    )
+
+    near_zone_start = int(
+        frame_height * TRACK_LINE_NEAR_Y_RATIO
+    )
+
+    close = nearest["bottom_y"] >= near_zone_start
+
+    return {
+        "detected": True,
+        "close": close,
+        "bottom_y": nearest["bottom_y"],
+        "area": nearest["area"],
+    }
+
+
+def detect_track_lines(
+    orange_mask,
+    blue_mask,
+    frame_height,
+):
+    orange = detect_track_line(
+        orange_mask,
+        "orange",
+        frame_height,
+    )
+
+    blue = detect_track_line(
+        blue_mask,
+        "blue",
+        frame_height,
+    )
+
+    return {
+        "orange": orange,
+        "blue": blue,
+    }
+
+
 def process_image(frame):
     """
     Processes one camera frame and returns all useful visual information.
@@ -1161,6 +1279,17 @@ def process_image(frame):
     # about the nearest left/front/right walls.
     walls = create_wall_output(wall_slices)
 
+
+    orange_line_mask = create_orange_line_mask(hsv_frame)
+    blue_line_mask = create_blue_line_mask(hsv_frame)
+
+    track_lines = detect_track_lines(
+        orange_line_mask,
+        blue_line_mask,
+        frame_height,
+    )
+
+
     # --------------------------------------------------
     # 4. RETURN COMPLETE VISION SNAPSHOT
     # --------------------------------------------------
@@ -1169,4 +1298,5 @@ def process_image(frame):
         "pillars": pillars,
         "parking": parking,
         "walls": walls,
+        "track_lines": track_lines
     }
