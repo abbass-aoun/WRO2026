@@ -1,0 +1,9 @@
+cv2 
+numpy
+math
+
+FOCAL_LENGTH_PIXELS = (pillar_height_pixels × KNOWN_DISTANCE_MM) / REAL_PILLAR_HEIGHT_MM
+
+# Walls 
+
+# parking/marker conflicts

@@ -768,4 +768,42 @@ The camera cannot reliably classify inner and outer walls unless the robot’s d
 The next step is to integrate the computer vision system we have created into the robot's overall working algorithm, and test it on the robot using the Rasberry pi camera.
 
 
+## Feature 13: Unified Image Processing Pipeline
+
+### Purpose
+The purpose of this feature is to create one main function that processes a camera frame and returns all useful computer vision information needed by the robot.
+
+Previous features developed pillar detection, parking marker detection, and wall detection separately. However, when integrating computer vision into the robot's main algorithm, calling and managing each detection subsystem separately would make the integration more complicated.
+
+This feature introduces a `process_image()` function that acts as the main interface between the computer vision module and the rest of the robot code.
+
+The function processes one camera frame and returns:
+
+- all detected red and green pillars
+- summarized parking information
+- summarized wall information
+
+The computer vision module only describes what is visible in the image. It does not decide how the robot should react. Navigation decisions remain the responsibility of the robot's FSM and control logic.
+
+### Design Logic
+The camera provides each frame in BGR format. Since the pillar, parking, and wall detection systems all use HSV-based masking, the frame is converted from BGR to HSV only once.
+
+The same HSV frame is then used by the three detection pipelines:
+
+```
+Camera frame
+     |
+     v
+BGR to HSV
+     |
+     +----------------+----------------+
+     |                |                |
+     v                v                v
+ Pillars           Parking           Walls
+     |                |                |
+     +----------------+----------------+
+                      |
+                      v
+                Vision result
+
 
