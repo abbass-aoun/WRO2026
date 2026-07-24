@@ -4,6 +4,8 @@ import threading
 from cv.camera import open_camera, read_frame, release_camera
 from cv.vision import process_image
 from cv.config import TRACK_LINE_CONFIRM_FRAMES
+from cv.vision import process_image, draw_vision_result
+
 from estimation.Transformation import camera_to_world
 
 class VisionThread:
@@ -13,6 +15,7 @@ class VisionThread:
         self._thread = None
         self._stop_event = threading.Event()
         self._lock = threading.Lock()
+        self._debug_frame = None
 
         self._orange_line_count = 0
         self._blue_line_count = 0
@@ -71,8 +74,14 @@ class VisionThread:
 
                 self._update_line_confirmation(result)
 
+                debug_frame = draw_vision_result(
+                    frame,
+                    result,
+                )
+                                
                 with self._lock:
                     self._result = result
+                    self._debug_frame = debug_frame
 
             except Exception as e:
                 print(f"[Vision] Error: {e}")
@@ -80,6 +89,14 @@ class VisionThread:
     def get_latest_result(self):
         with self._lock:
             return copy.deepcopy(self._result)
+
+    def get_latest_frame(self):
+        with self._lock:
+
+            if self._debug_frame is None:
+                return None
+
+            return self._debug_frame.copy()
 
     def stop(self):
 

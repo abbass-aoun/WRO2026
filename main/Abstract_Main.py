@@ -1,13 +1,15 @@
 import time
 import math
 import numpy as np
+import cv2 as cv
 
 from enum import Enum, auto
 
-from trajectory.builder import TrajectoryBuilder
+from config import DT_S
+
+from trajectory.builder import TrajectoryBuilder, RED, GREEN
 
 from main.support import calibrate_gyro
-from config import DT_S
 from main.vision_adapter import VisionThread, transform_to_global
 from main.initialize_hardware import initialize_hardware
 
@@ -74,6 +76,11 @@ pending_line_y = None
 LINE_ARM_MAX_TRAVEL_CM = 50.0
 
 
+pillar_initialized = False
+pillar_trajectory = None
+pillar_near_s = 0.0
+_active_pillar_key = None
+
 #-----------------------------------------------------------
 # Initializing PID controller
 #-----------------------------------------------------------
@@ -86,7 +93,14 @@ from config import(
     PID_WINDUP_LIM,
     PID_HEADING_W,
     SERVO_MAX_DEG,
-    CORNER_RADIUS_CM
+    CORNER_RADIUS_CM,
+
+    PILLAR_CLEARANCE_CM,
+    PILLAR_TRIGGER_CM,
+    PILLAR_RECONNECT_CM,
+    PILLAR_DONE_CM,
+    PILLAR_DUTY,
+    PILLAR_APPROACH_CM,
 )
 
 straight_pid = PIDController(
@@ -501,6 +515,353 @@ def take_step(car, robot, theta):
     return steering_deg    
 
 
+def _pillars_ahead(pillars, x, y, theta):
+    """
+    Return visible pillars that are ahead of the robot,
+    sorted nearest first.
+    """
+
+    ahead = []
+
+    forward_x = math.cos(theta)
+    forward_y = math.sin(theta)
+
+    for pillar in pillars:
+
+        px = pillar.get("global_x_cm")
+        py = pillar.get("global_y_cm")
+        color = pillar.get("color")
+
+        if px is None or py is None:
+            continue
+
+        if color not in ("red", "green"):
+            continue
+
+        dx = px - x
+        dy = py - y
+
+        # Dot product with robot forward direction.
+        # Positive means the pillar is ahead.
+        forward_distance = (
+            dx * forward_x
+            + dy * forward_y
+        )
+
+        if forward_distance <= 0:
+            continue
+
+        distance = math.hypot(dx, dy)
+
+        ahead.append(
+            (distance, pillar)
+        )
+
+    ahead.sort(key=lambda item: item[0])
+
+    return [
+        pillar
+        for _, pillar in ahead
+    ]
+
+
+def pillar_in_range(pillars, x, y, theta):
+    """
+    Check whether the nearest pillar ahead is close enough
+    to begin avoidance.
+    """
+
+    ahead = _pillars_ahead(
+        pillars,
+        x,
+        y,
+        theta,
+    )
+
+    if not ahead:
+        return False
+
+    pillar = ahead[0]
+
+    distance = math.hypot(
+        pillar["global_x_cm"] - x,
+        pillar["global_y_cm"] - y,
+    )
+
+    return distance <= PILLAR_TRIGGER_CM
+
+
+def calculate_trajectory_to_pillar(
+    pillars,
+    x,
+    y,
+    theta,
+):
+    """
+    Build a two-segment Bezier avoidance trajectory
+    around the nearest pillar ahead.
+    """
+
+    ahead = _pillars_ahead(
+        pillars,
+        x,
+        y,
+        theta,
+    )
+
+    if not ahead:
+        return None
+
+    # -------------------------------
+    # Nearest pillar
+    # -------------------------------
+
+    pillar = ahead[0]
+
+    pillar_x = pillar["global_x_cm"]
+    pillar_y = pillar["global_y_cm"]
+    color = pillar["color"]
+
+    pillar_color = (
+        GREEN
+        if color == "green"
+        else RED
+    )
+
+    # Direction of the current straight.
+    nx = math.cos(target_theta)
+    ny = math.sin(target_theta)
+
+    # -------------------------------
+    # Second pillar already visible
+    # -------------------------------
+
+    if len(ahead) >= 2:
+
+        next_pillar = ahead[1]
+
+        next_x = next_pillar["global_x_cm"]
+        next_y = next_pillar["global_y_cm"]
+        next_color = next_pillar["color"]
+
+        # Green → approach on left.
+        # Red   → approach on right.
+        side = (
+            +1.0
+            if next_color == "green"
+            else -1.0
+        )
+
+        end_x = (
+            next_x
+            + side * (-ny) * PILLAR_CLEARANCE_CM
+            - PILLAR_APPROACH_CM * nx
+        )
+
+        end_y = (
+            next_y
+            + side * nx * PILLAR_CLEARANCE_CM
+            - PILLAR_APPROACH_CM * ny
+        )
+
+    # -------------------------------
+    # Only one pillar visible
+    # -------------------------------
+
+    else:
+
+        # Reconnect PILLAR_RECONNECT_CM AFTER the pillar.
+        end_x = (
+            pillar_x
+            + PILLAR_RECONNECT_CM * nx
+        )
+
+        end_y = (
+            pillar_y
+            + PILLAR_RECONNECT_CM * ny
+        )
+
+    return TrajectoryBuilder.pillar_swerve(
+        start_x=x,
+        start_y=y,
+        start_theta=theta,
+
+        pillar_x=pillar_x,
+        pillar_y=pillar_y,
+        pillar_color=pillar_color,
+
+        end_x=end_x,
+        end_y=end_y,
+        end_theta=target_theta,
+
+        clearance=PILLAR_CLEARANCE_CM,
+    )
+
+
+def pillar_step(
+    car,
+    robot,
+    pillars,
+    x,
+    y,
+    theta,
+    steering_pid,
+):
+    """
+    Build a pillar-avoidance trajectory once,
+    then follow it until complete.
+
+    Returns:
+        steering_deg, done
+    """
+
+    global pillar_trajectory
+    global pillar_near_s
+    global pillar_initialized
+    global _active_pillar_key
+
+    # ========================================
+    # Build trajectory once
+    # ========================================
+
+    if not pillar_initialized:
+
+        ahead = _pillars_ahead(
+            pillars,
+            x,
+            y,
+            theta,
+        )
+
+        if not ahead:
+            return 0.0, True
+
+        active = ahead[0]
+
+        pillar_trajectory = (
+            calculate_trajectory_to_pillar(
+                pillars,
+                x,
+                y,
+                theta,
+            )
+        )
+
+        if pillar_trajectory is None:
+            return 0.0, True
+
+        pillar_near_s = 0.0
+        pillar_initialized = True
+
+        _active_pillar_key = (
+            round(active["global_x_cm"], 1),
+            round(active["global_y_cm"], 1),
+            active["color"],
+        )
+
+        steering_pid.reset()
+
+        print(
+            f"Pillar swerve created: "
+            f"{_active_pillar_key}"
+        )
+
+    # ========================================
+    # Find position along trajectory
+    # ========================================
+
+    pillar_near_s = (
+        pillar_trajectory.find_closest(
+            x,
+            y,
+            pillar_near_s,
+        )
+    )
+
+    px, py = pillar_trajectory.get_point(
+        pillar_near_s
+    )
+
+    tx, ty = pillar_trajectory.get_tangent(
+        pillar_near_s
+    )
+
+    path_theta = math.atan2(ty, tx)
+
+    # ========================================
+    # Calculate tracking errors
+    # ========================================
+
+    cross_track_error = (
+        -math.sin(path_theta) * (x - px)
+        + math.cos(path_theta) * (y - py)
+    )
+
+    heading_error = normalize_angle(
+        theta - path_theta
+    )
+
+    combined_error = (
+        cross_track_error
+        + PID_HEADING_W * heading_error
+    )
+
+    # ========================================
+    # Steering
+    # ========================================
+
+    steering_deg = steering_pid._compute(
+        combined_error
+    )
+
+    steering_deg = max(
+        -SERVO_MAX_DEG,
+        min(
+            SERVO_MAX_DEG,
+            steering_deg,
+        ),
+    )
+
+    robot.update_steering(steering_deg)
+
+    car.set_all(
+        direction="f",
+        speed=PILLAR_DUTY,
+        angle=steering_deg,
+    )
+
+    # ========================================
+    # Check trajectory completion
+    # ========================================
+
+    remaining = (
+        pillar_trajectory.total_length
+        - pillar_near_s
+    )
+
+    done = remaining <= PILLAR_DONE_CM
+
+    if done:
+        clear_pillar()
+        print("Pillar cleared")
+
+    return steering_deg, done
+
+
+def clear_pillar():
+    """Reset state for the next pillar."""
+
+    global pillar_initialized
+    global pillar_trajectory
+    global pillar_near_s
+    global _active_pillar_key
+
+    pillar_initialized = False
+    pillar_trajectory = None
+    pillar_near_s = 0.0
+    _active_pillar_key = None
+
+
 def corner_step(
     car,
     robot,
@@ -643,6 +1004,7 @@ def reset_race():
     pending_line_x = None
     pending_line_y = None
 
+    clear_pillar()
     straight_pid.reset()
 
 
@@ -740,6 +1102,24 @@ def main():
                 theta,
             )
 
+            debug_frame = vision.get_latest_frame()
+
+            if debug_frame is not None:
+
+                cv.imshow(
+                    "WRO Vision",
+                    debug_frame,
+                )
+
+                cv.waitKey(1)
+
+            pillars = vision_result.get(
+                "pillars",
+                [],
+            )
+
+
+
             # Camera PRE-CONFIRMATION
             update_pending_line_from_camera(
                 vision_result,
@@ -766,7 +1146,7 @@ def main():
 
             # New corner started
             if transition == "ENTER_CORNER":
-
+                clear_pillar()
                 straight_pid.reset()
 
 
@@ -815,11 +1195,39 @@ def main():
 
             if section_state == SectionState.STRAIGHT:
 
-                steering = take_step(
-                    car,
-                    robot,
-                    theta
-                )
+                # Continue an existing swerve even if the pillar
+                # has disappeared from the camera.
+    
+                if (
+                    pillar_initialized
+                    or pillar_in_range(
+                        pillars,
+                        x,
+                        y,
+                        theta,
+                    )
+                ):
+
+                    steering, pillar_done = pillar_step(
+                        car,
+                        robot,
+                        pillars,
+                        x,
+                        y,
+                        theta,
+                        straight_pid,
+                    )
+
+                    if pillar_done:
+                        straight_pid.reset()
+
+                else:
+
+                    steering = take_step(
+                        car,
+                        robot,
+                        theta,
+                    )
 
             elif section_state == SectionState.CORNER:
 
@@ -863,7 +1271,8 @@ def main():
         car.stop()
         vision.stop()
         color.stop()
-
+        cv.destroyAllWindows()
+        
         for led in leds:
             led.off()
 

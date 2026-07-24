@@ -1300,3 +1300,107 @@ def process_image(frame):
         "walls": walls,
         "track_lines": track_lines
     }
+
+
+def draw_vision_result(frame, result):
+    """
+    Draw all available detections on one frame.
+    """
+
+    output = frame.copy()
+
+    # -------------------------
+    # Pillars
+    # -------------------------
+    pillars = result.get("pillars", [])
+
+    output = draw_detections(
+        output,
+        pillars,
+    )
+
+    # -------------------------
+    # Parking
+    # -------------------------
+    parking = result.get("parking", {})
+
+    parking_markers = []
+
+    marker_1 = parking.get("marker_1")
+    marker_2 = parking.get("marker_2")
+
+    if marker_1 is not None:
+        parking_markers.append(marker_1)
+
+    if marker_2 is not None:
+        parking_markers.append(marker_2)
+
+    output = draw_parking_markers(
+        output,
+        parking_markers,
+    )
+
+    # -------------------------
+    # Walls
+    # -------------------------
+    walls = result.get("walls", {})
+
+    wall_slices = []
+
+    for key in (
+        "nearest_left_wall",
+        "nearest_front_wall",
+        "nearest_right_wall",
+    ):
+        wall = walls.get(key)
+
+        if wall is not None:
+            wall_slices.append(wall)
+
+    output = draw_wall_slices(
+        output,
+        wall_slices,
+        walls,
+    )
+
+    # -------------------------
+    # Track line status
+    # -------------------------
+    track_lines = result.get("track_lines", {})
+
+    orange = track_lines.get("orange", {})
+    blue = track_lines.get("blue", {})
+
+    orange_text = (
+        f"Orange: det={orange.get('detected', False)} "
+        f"close={orange.get('close', False)} "
+        f"confirmed={orange.get('confirmed_close', False)}"
+    )
+
+    blue_text = (
+        f"Blue: det={blue.get('detected', False)} "
+        f"close={blue.get('close', False)} "
+        f"confirmed={blue.get('confirmed_close', False)}"
+    )
+
+    cv.putText(
+        output,
+        orange_text,
+        (10, 25),
+        cv.FONT_HERSHEY_SIMPLEX,
+        0.5,
+        (0, 165, 255),
+        1,
+    )
+
+    cv.putText(
+        output,
+        blue_text,
+        (10, 50),
+        cv.FONT_HERSHEY_SIMPLEX,
+        0.5,
+        (255, 0, 0),
+        1,
+    )
+
+    return output

@@ -88,6 +88,11 @@ CH_CM       = 250.0   # centreline far  wall (y=250 top,   x=250 right)
 # Must be > half-pillar (2.5 cm) + half-car-width + safety margin.
 PILLAR_CLEARANCE_CM = 20.0   # lateral offset from pillar centre
 PILLAR_BODY_CM      =  5.0   # pillar side length (WRO 2026 spec: 50×50 mm)
+PILLAR_TRIGGER_CM = 90.0
+PILLAR_RECONNECT_CM = 80.0
+PILLAR_DONE_CM = 15.0
+PILLAR_DUTY = 0.30
+PILLAR_APPROACH_CM = 30.0
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Parking Lot                             (TUNE LOT_DEPTH if robot changes)
@@ -131,3 +136,5 @@ SIM_STAT_RUNS       =  3      # random scenarios for end-of-run statistics (0 = 
 MOTOR_INVERTED    = True   # flip to True if robot drives backward on 'f'
 MAX_DUTY_SAFE     = 0.35    # TUNE: raise gradually after bench tests pass
 SHOW_VISION_DEBUG = False   # True = live camera window (display must be attached)
+
+
