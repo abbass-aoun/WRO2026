@@ -145,7 +145,7 @@ class ColorSensor:
             # Ratio-based so ambient light level doesn't matter.
             # TUNE ON REAL ROBOT if false positives occur.
             self.orange_seen = (
-                r > 2000 
+                r > 5000 
                 and r > b * 1.5 
                 and r > g * 0.7
             )
@@ -153,7 +153,7 @@ class ColorSensor:
             # Blue: B strongly dominant over R and G.
             # TUNE ON REAL ROBOT if false positives occur.
             self.blue_seen   = (
-                b > 2000 
+                b > 3500 
                 and b > r * 1.5 
                 and b > g * 0.7
             )
