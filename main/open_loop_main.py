@@ -1,4 +1,4 @@
-"""
+WHAT """
 main/open_loop_main.py  —  WRO 2026 Open-Loop Challenge FSM
 =============================================================
 Sensors used:
@@ -351,7 +351,7 @@ def fsm_step(motor, servo, tof_readings, vision_result, orange_seen, blue_seen):
         elapsed = now - _phase_start_t
         cw = direction == Direction.CW
 
-        if elapsed < CORNER_TURN_TIME := CORNER_TURN_S:
+        if elapsed < CORNER_TURN_S:
             angle = SERVO_CENTER + (CORNER_LOCK_DEG if cw else -CORNER_LOCK_DEG)
             servo.set(angle)
             motor.forward(CORNER_SPEED)
