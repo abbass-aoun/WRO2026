@@ -1,13 +1,9 @@
 """
-control/servoClass.py — Hardware servo driver (gpiozero PWM).
-=============================================================
-
-Drives the steering servo via gpiozero PWMOutputDevice.
-gpiozero automatically selects the correct GPIO chip on all
-Raspberry Pi models including RPi 5 (gpiochip4 / RP1).
+control/servoClass.py — Hardware servo driver (rpi_hardware_pwm).
+=================================================================
 
 WIRING:
-    Servo signal wire → GPIO pin (defined in main.py as PIN_SERVO)
+    Servo signal wire → GPIO 12 (hardware PWM channel 0)
     Servo power       → 5 V rail (NOT GPIO 3.3 V)
     Servo ground      → common GND
 
@@ -16,39 +12,39 @@ TUNING:
     max_deviation : maximum steering deflection each side in degrees. TUNE ON REAL ROBOT.
 """
 
-from gpiozero import PWMOutputDevice
+from rpi_hardware_pwm import HardwarePWM
 
 
 class myServo:
     """
-    Steering servo driver using gpiozero PWM.
+    Steering servo driver using hardware PWM.
 
     Usage:
-        servo = myServo(servo_pin=12, center_angle=78, max_deviation=27)
+        servo = myServo(pwm_channel=0, center_angle=80, max_deviation=27)
         servo.set_servo_angle(+15)   # steer 15 degrees one way
         servo.set_servo_angle(-15)   # steer 15 degrees other way
         servo.set_servo_angle(0)     # wheels straight
-        servo.cleanup()              # release GPIO when done
+        servo.cleanup()              # release PWM when done
     """
 
-    def __init__(self, servo_pin: int,
+    def __init__(self, pwm_channel: int = 0,
                  center_angle: int = 80,
                  max_deviation: int = 27):
         """
         Args:
-            servo_pin     : GPIO BCM pin number for the servo signal wire.
+            pwm_channel   : hardware PWM channel (0 = GPIO 12, 1 = GPIO 13).
             center_angle  : angle (0-180) that steers straight. TUNE ON REAL ROBOT.
             max_deviation : max steering deflection each side (degrees). TUNE ON REAL ROBOT.
         """
-        self._pwm      = PWMOutputDevice(servo_pin, frequency=50)
+        self._pwm      = HardwarePWM(pwm_channel=pwm_channel, hz=50, chip=0)
+        self._pwm.start(0)
         self.center    = center_angle
         self.deviation = max_deviation
 
     def _angle_to_duty(self, angle: float) -> float:
-        """Convert 0-180 degree angle to gpiozero duty cycle (0.0-1.0)."""
+        """Convert 0-180 degree angle to duty cycle % (2.5–12.5)."""
         angle = max(0.0, min(180.0, angle))
-        pulse_us = 500.0 + (angle / 180.0) * 2000.0   # 500-2500 µs
-        return pulse_us * 1e-6 * 50.0                  # duty = pulse * freq
+        return 2.5 + (angle / 180.0) * 10.0
 
     def set_servo_angle(self, relative_angle: float) -> None:
         """
@@ -62,12 +58,12 @@ class myServo:
         absolute_angle = self.center + relative_angle
         absolute_angle = max(float(self.center - self.deviation),
                              min(float(self.center + self.deviation), absolute_angle))
-        self._pwm.value = self._angle_to_duty(absolute_angle)
+        self._pwm.change_duty_cycle(self._angle_to_duty(absolute_angle))
 
     def center_servo(self) -> None:
         """Drive wheels straight (relative angle = 0)."""
         self.set_servo_angle(0.0)
 
     def cleanup(self) -> None:
-        """Release the GPIO pin."""
-        self._pwm.close()
+        """Release the PWM channel."""
+        self._pwm.stop()
