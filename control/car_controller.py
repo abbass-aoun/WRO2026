@@ -3,7 +3,7 @@ from time import time, sleep
 from control.servoClass import myServo
 from control.allEncodersClass import RobotEncoders
 from control.brake_controller import BrakePIDController
-from config import MOTOR_INVERTED
+from config import MOTOR_INVERTED, SERVO_MAX_DEG, SERVO_CENTER_DEG
 
 
 class CarController:
@@ -11,7 +11,11 @@ class CarController:
         self.in1 = DigitalOutputDevice(in1_pin)
         self.in2 = DigitalOutputDevice(in2_pin)
         self.ena = PWMOutputDevice(ena_pin)
-        self.servo = myServo(pwm_channel=0, max_deviation=27)
+        self.servo = myServo(
+            pwm_channel=0,
+            center_angle=SERVO_CENTER_DEG,
+            max_deviation=SERVO_MAX_DEG,
+        )
         self.stop()   # explicit safe state — pins are defined but motor is off
 
     def set_motor(self, direction, speed=1.0):
