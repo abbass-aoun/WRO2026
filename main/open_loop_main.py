@@ -1,4 +1,4 @@
-WHAT """
+"""
 main/open_loop_main.py  —  WRO 2026 Open-Loop Challenge FSM
 =============================================================
 Sensors used:
