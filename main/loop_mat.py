@@ -87,7 +87,7 @@ def loop_mat(motor: MotorController, steer: SteeringController, laps=1):
 
 
 def main():
-    motor = MotorController(forward_pin=18, backward_pin=13, enable_pin=19)
+    motor = MotorController(forward_pin=13, backward_pin=18, enable_pin=19)
     steer = SteeringController(pwm_channel=0, chip=0)
 
     try:
