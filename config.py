@@ -31,7 +31,9 @@ import math
 WHEELBASE_CM    = 16.5   # front-to-rear axle distance (cm)
 ROBOT_LENGTH_CM = 30.0   # overall body length (cm)
 ROBOT_WIDTH_CM  = 12.0   # overall body width  (cm)
-SERVO_MAX_DEG   = 27.0   # maximum steering angle each way (deg)
+
+SERVO_CENTER_DEG = 60.0  # absolute servo angle that makes wheels straight
+SERVO_MAX_DEG = 18.0     # or your current chosen maximum
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Motion                                                 TUNE ON REAL ROBOT

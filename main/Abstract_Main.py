@@ -1102,24 +1102,15 @@ def main():
                 theta,
             )
 
-            track = vision_result.get("track_lines", {})
-
-            print(
-                f"TCS: O={orange_seen} B={blue_seen} | "
-                f"pending={pending_line} | "
-                f"CAM O={track.get('orange', {}).get('confirmed_close', False)} | "
-                f"CAM B={track.get('blue', {}).get('confirmed_close', False)}"
-            )
-
+            # Camera frame remains available for pillar detections
+            # and visual debugging.
             debug_frame = vision.get_latest_frame()
 
             if debug_frame is not None:
-
                 cv.imshow(
                     "WRO Vision",
                     debug_frame,
                 )
-
                 cv.waitKey(1)
 
             pillars = vision_result.get(
@@ -1127,29 +1118,15 @@ def main():
                 [],
             )
 
-
-
-            # Camera PRE-CONFIRMATION
-            update_pending_line_from_camera(
-                vision_result,
-                x,
-                y,
-            )
-            
-            # FLOOR SENSOR + CAMERA FUSION
-            confirmed_orange, confirmed_blue = (
-                confirm_floor_line(
-                    orange_seen,
-                    blue_seen,
-                    x,
-                    y,
-                )
+            # Debug only the physical TCS3200 sensor
+            print(
+                f"TCS: O={orange_seen} B={blue_seen}"
             )
 
-            # SECTION UPDATE
+            # Track-section changes now depend only on TCS3200
             transition = add_section(
-                confirmed_orange,
-                confirmed_blue
+                orange_seen,
+                blue_seen,
             )
 
 

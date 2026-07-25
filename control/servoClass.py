@@ -28,7 +28,7 @@ class myServo:
     """
 
     def __init__(self, pwm_channel: int = 0,
-                 center_angle: int = 80,
+                 center_angle: int = 60,
                  max_deviation: int = 27):
         """
         Args:
