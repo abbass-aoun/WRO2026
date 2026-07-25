@@ -67,6 +67,8 @@ def initialize_hardware():
     # Start button
     # --------------------------------------------------------
 
+    # Active-high Start wiring: the internal pull-down holds GPIO 8 LOW;
+    # pressing the physical button connects the input to 3.3 V (HIGH).
     start_button = Button(
         PIN_START_BUTTON,
         pull_up=False,

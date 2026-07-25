@@ -20,6 +20,7 @@ of each sensor and correct this single mapping before driving the real robot.
 from __future__ import annotations
 
 import argparse
+import ast
 import copy
 import math
 import statistics
@@ -28,6 +29,7 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum, auto
+from pathlib import Path
 from typing import Any, Callable, Deque, Dict, Iterable, List, Mapping, Optional, Tuple
 
 import numpy as np
@@ -110,6 +112,10 @@ class FSMConfig:
     gyro_sample_period_s: float = 0.01
 
     localisation_duty: float = 0.20
+    minimum_effective_motor_duty: float = 0.15
+    # Disabled until the encoder diagnostic proves a static-friction kick is needed.
+    startup_kick_duty: Optional[float] = None
+    startup_kick_duration_s: float = 0.0
     straight_duty: float = 0.32
     corner_approach_duty: float = 0.20
     corner_duty: float = 0.24
@@ -188,6 +194,8 @@ class FSMConfig:
     predicted_corner_slow_margin_cm: float = 45.0
 
     no_encoder_motion_timeout_s: float = 1.2
+    encoder_startup_grace_s: float = 0.60
+    encoder_progress_epsilon_cm: float = 0.20
     encoder_imbalance_timeout_s: float = 0.8
     encoder_speed_max_cm_s: float = 150.0
     imu_stale_s: float = 0.35
@@ -349,6 +357,35 @@ class ControlCommand:
     duty: float = 0.0
     steering_deg: float = 0.0
     reason: str = ""
+
+
+class ActiveHighPressGate:
+    """Require stable LOW/release followed by one stable active-high press."""
+
+    def __init__(self, debounce_s: float = 0.05) -> None:
+        self.debounce_s = debounce_s
+        self.release_since_s: Optional[float] = None
+        self.press_since_s: Optional[float] = None
+        self.release_confirmed = False
+
+    def update(self, is_high: bool, now_s: float) -> bool:
+        if not self.release_confirmed:
+            if is_high:
+                self.release_since_s = None
+                return False
+            if self.release_since_s is None:
+                self.release_since_s = now_s
+            elif now_s - self.release_since_s >= self.debounce_s:
+                self.release_confirmed = True
+            return False
+
+        if not is_high:
+            self.press_since_s = None
+            return False
+        if self.press_since_s is None:
+            self.press_since_s = now_s
+            return False
+        return now_s - self.press_since_s >= self.debounce_s
 
 
 class SimplePID:
@@ -691,7 +728,15 @@ class SensorFusionFSM:
         self.gyro_bias_rad_s = 0.0
         self.cleanup_done = False
         self.started = False
-        self._last_encoder_motion_s = time.monotonic()
+        # Encoder watchdog timing begins with an effective motor command, never
+        # with Python construction or slow sensor/gyro initialization.
+        self._motion_command_started_s: Optional[float] = None
+        self._last_encoder_progress_s = 0.0
+        self._previous_left_encoder_distance_cm = 0.0
+        self._previous_right_encoder_distance_cm = 0.0
+        self._left_encoder_last_progress_s = 0.0
+        self._right_encoder_last_progress_s = 0.0
+        self._encoder_motion_confirmed = False
         self._encoder_imbalance_since_s: Optional[float] = None
         self._parking_support = 0
         self._corner_counted_for_entry = False
@@ -810,7 +855,13 @@ class SensorFusionFSM:
     def wait_for_start(self) -> None:
         self.transition_to(State.WAIT_FOR_START, "sensor warmup and stationary gyro calibration complete")
         led_on, last_toggle = False, time.monotonic()
-        while not self.start_button.is_pressed:
+        gate = ActiveHighPressGate(debounce_s=0.05)
+        if self.start_button.is_pressed:
+            print("[Start] Waiting for button release...", flush=True)
+        else:
+            print("[Start] Confirming stable LOW before arming...", flush=True)
+        ready_reported = False
+        while True:
             now = time.monotonic()
             if now - last_toggle >= 0.5:
                 led_on, last_toggle = not led_on, now
@@ -818,6 +869,17 @@ class SensorFusionFSM:
                     led.on() if led_on else led.off()
             # Explicitly enforce the stopped state throughout the wait.
             self.car.stop()
+            accepted = gate.update(bool(self.start_button.is_pressed), now)
+            if gate.release_confirmed and not ready_reported:
+                print(
+                    "[Start] Ready; waiting for active-high press on GPIO 8, "
+                    "pull_up=False",
+                    flush=True,
+                )
+                ready_reported = True
+            if accepted:
+                print("[Start] Stable press accepted", flush=True)
+                break
             time.sleep(0.01)
         for led in self.leds:
             led.off()
@@ -826,8 +888,70 @@ class SensorFusionFSM:
         self.robot.reset()
         self.context = NavigationContext()
         self.started = True
+        self._reset_encoder_watchdog(time.monotonic(), 0.0, 0.0)
         self.line_detector.reset_levels()  # already-on-line must clear before event
         self.transition_to(State.DETERMINE_DIRECTION, "physical Start button pressed")
+
+    def _reset_encoder_watchdog(
+        self, now_s: float, left_distance_cm: float, right_distance_cm: float
+    ) -> None:
+        """Reset all command-relative motion tracking after Start/reset."""
+        self._motion_command_started_s = None
+        self._last_encoder_progress_s = now_s
+        self._previous_left_encoder_distance_cm = left_distance_cm
+        self._previous_right_encoder_distance_cm = right_distance_cm
+        self._left_encoder_last_progress_s = now_s
+        self._right_encoder_last_progress_s = now_s
+        self._encoder_motion_confirmed = False
+        self._encoder_imbalance_since_s = None
+
+    def _track_effective_motion_command(
+        self, command: ControlCommand, now_s: float,
+        left_distance_cm: float, right_distance_cm: float,
+    ) -> None:
+        """Start/clear watchdog timing when the command sent to hardware changes."""
+        moving = (
+            command.direction in ("f", "b")
+            and command.duty >= self.cfg.minimum_effective_motor_duty
+        )
+        previously_moving = self._motion_command_started_s is not None
+        if not moving:
+            self._motion_command_started_s = None
+            self._encoder_motion_confirmed = False
+            self._encoder_imbalance_since_s = None
+            self._previous_left_encoder_distance_cm = left_distance_cm
+            self._previous_right_encoder_distance_cm = right_distance_cm
+            return
+        if not previously_moving:
+            self._motion_command_started_s = now_s
+            self._last_encoder_progress_s = now_s
+            self._left_encoder_last_progress_s = now_s
+            self._right_encoder_last_progress_s = now_s
+            self._previous_left_encoder_distance_cm = left_distance_cm
+            self._previous_right_encoder_distance_cm = right_distance_cm
+            self._encoder_motion_confirmed = False
+            self._encoder_imbalance_since_s = None
+
+    def _update_encoder_progress(self, snap: SensorSnapshot) -> Tuple[bool, bool]:
+        epsilon = self.cfg.encoder_progress_epsilon_cm
+        left_progress = (
+            snap.left_distance_cm
+            >= self._previous_left_encoder_distance_cm + epsilon
+        )
+        right_progress = (
+            snap.right_distance_cm
+            >= self._previous_right_encoder_distance_cm + epsilon
+        )
+        if left_progress:
+            self._left_encoder_last_progress_s = snap.timestamp_s
+            self._previous_left_encoder_distance_cm = snap.left_distance_cm
+        if right_progress:
+            self._right_encoder_last_progress_s = snap.timestamp_s
+            self._previous_right_encoder_distance_cm = snap.right_distance_cm
+        if left_progress or right_progress:
+            self._last_encoder_progress_s = snap.timestamp_s
+            self._encoder_motion_confirmed = True
+        return left_progress, right_progress
 
     def _read_snapshot(self, now_s: float, dt_s: float) -> SensorSnapshot:
         left_speed, right_speed = self.encoders.get_linear_speeds()
@@ -1356,18 +1480,49 @@ class SensorFusionFSM:
             return "non-finite estimator or encoder value"
         if max(snap.left_speed_cm_s, snap.right_speed_cm_s) > self.cfg.encoder_speed_max_cm_s:
             return "impossible encoder speed"
-        moving_commanded = self.last_command.direction == "f" and self.last_command.duty > 0.08
-        if snap.speed_cm_s > 1.0:
-            self._last_encoder_motion_s = snap.timestamp_s
-        elif moving_commanded and snap.timestamp_s - self._last_encoder_motion_s > self.cfg.no_encoder_motion_timeout_s:
-            return "motor commanded but encoders report no motion"
-        imbalance = abs(snap.left_speed_cm_s - snap.right_speed_cm_s) > max(
-            25.0, 0.8 * max(snap.left_speed_cm_s, snap.right_speed_cm_s)
-        )
-        if imbalance and moving_commanded:
-            self._encoder_imbalance_since_s = self._encoder_imbalance_since_s or snap.timestamp_s
-            if snap.timestamp_s - self._encoder_imbalance_since_s > self.cfg.encoder_imbalance_timeout_s:
-                return "persistent wheel-speed imbalance"
+        left_progress, right_progress = self._update_encoder_progress(snap)
+        moving_commanded = self._motion_command_started_s is not None
+        if moving_commanded:
+            command_age_s = snap.timestamp_s - self._motion_command_started_s
+            progress_age_s = snap.timestamp_s - self._last_encoder_progress_s
+            no_motion_deadline_s = (
+                self.cfg.encoder_startup_grace_s
+                + self.cfg.no_encoder_motion_timeout_s
+            )
+            if (
+                not self._encoder_motion_confirmed
+                and command_age_s >= no_motion_deadline_s
+            ) or (
+                self._encoder_motion_confirmed
+                and progress_age_s >= self.cfg.no_encoder_motion_timeout_s
+            ):
+                return self._encoder_fault_context(
+                    snap, "neither encoder made recent measurable progress"
+                )
+
+            # One wheel is enough to confirm initial motion. Diagnose the missing
+            # side separately only after some motion has really been observed.
+            if self._encoder_motion_confirmed:
+                left_age_s = snap.timestamp_s - self._left_encoder_last_progress_s
+                right_age_s = snap.timestamp_s - self._right_encoder_last_progress_s
+                one_sided = (
+                    (left_progress or left_age_s < self.cfg.encoder_imbalance_timeout_s)
+                    != (right_progress or right_age_s < self.cfg.encoder_imbalance_timeout_s)
+                )
+                if one_sided and command_age_s >= self.cfg.encoder_startup_grace_s:
+                    self._encoder_imbalance_since_s = (
+                        self._encoder_imbalance_since_s or snap.timestamp_s
+                    )
+                    if (
+                        snap.timestamp_s - self._encoder_imbalance_since_s
+                        >= self.cfg.encoder_imbalance_timeout_s
+                    ):
+                        missing = "left" if left_age_s > right_age_s else "right"
+                        return self._encoder_fault_context(
+                            snap, f"persistent one-sided motion: {missing} encoder has no progress"
+                        )
+                else:
+                    self._encoder_imbalance_since_s = None
         else:
             self._encoder_imbalance_since_s = None
         if self.tof_reader and (
@@ -1376,6 +1531,26 @@ class SensorFusionFSM:
         ):
             return "ToF background reader stopped or stalled"
         return None
+
+    def _encoder_fault_context(self, snap: SensorSnapshot, summary: str) -> str:
+        command_started = self._motion_command_started_s
+        command_age_s = (
+            0.0 if command_started is None
+            else snap.timestamp_s - command_started
+        )
+        progress_age_s = snap.timestamp_s - self._last_encoder_progress_s
+        return (
+            f"[Safety] Encoder no-motion: {summary}\n"
+            f"  command={self.last_command.direction} duty={self.last_command.duty:.2f}\n"
+            f"  command_age={command_age_s:.2f}s progress_age={progress_age_s:.2f}s\n"
+            f"  left_speed={snap.left_speed_cm_s:.1f}cm/s "
+            f"right_speed={snap.right_speed_cm_s:.1f}cm/s\n"
+            f"  left_distance={snap.left_distance_cm:.2f}cm "
+            f"right_distance={snap.right_distance_cm:.2f}cm\n"
+            f"  progress_epsilon={self.cfg.encoder_progress_epsilon_cm:.2f}cm "
+            f"startup_grace={self.cfg.encoder_startup_grace_s:.2f}s "
+            f"timeout={self.cfg.no_encoder_motion_timeout_s:.2f}s"
+        )
 
     def _apply_safety_overrides(
         self, snap: SensorSnapshot, command: ControlCommand
@@ -1419,6 +1594,12 @@ class SensorFusionFSM:
             direction = command.direction if command.direction in ("f", "b") else "s"
         safe = ControlCommand(direction, duty, steer, command.reason)
         self.last_command, self.last_steering_deg = safe, steer
+        now_s = self.last_snapshot.timestamp_s if self.last_snapshot else time.monotonic()
+        left_distance_cm = self.last_snapshot.left_distance_cm if self.last_snapshot else 0.0
+        right_distance_cm = self.last_snapshot.right_distance_cm if self.last_snapshot else 0.0
+        self._track_effective_motion_command(
+            safe, now_s, left_distance_cm, right_distance_cm
+        )
         if self.dry_run:
             return
         self.robot.update_steering(steer)
@@ -1431,8 +1612,9 @@ class SensorFusionFSM:
             print_tof_mapping(self.tof_reader.snapshot() if self.tof_reader else None)
             self.calibrate_gyro()
             self.wait_for_start()
-            last_s = time.monotonic()
-            next_tick_s = last_s
+            loop_started_s = time.monotonic()
+            last_s = loop_started_s - self.cfg.period_s
+            next_tick_s = loop_started_s
             while self.state not in (State.FINISHED, State.SAFE_STOP, State.FAULT):
                 now_s = time.monotonic()
                 dt_s, last_s = now_s - last_s, now_s
@@ -1562,13 +1744,21 @@ def _mock_snapshot(
     now_s: float, distance_cm: float, heading_deg: float = 0.0,
     front_mm: float = 900.0, left_mm: float = 440.0, right_mm: float = 440.0,
     orange: bool = False, blue: bool = False,
+    left_distance_cm: Optional[float] = None,
+    right_distance_cm: Optional[float] = None,
+    left_speed_cm_s: float = 20.0,
+    right_speed_cm_s: float = 20.0,
 ) -> SensorSnapshot:
     channels = [ToFChannel(900, 900, now_s, True, False) for _ in range(4)]
     for role, value in (("front", front_mm), ("left", left_mm), ("right", right_mm)):
         i = TOF_ROLE_TO_INDEX[role]
         channels[i] = ToFChannel(value, value, now_s, True, False)
+    left_distance_cm = distance_cm if left_distance_cm is None else left_distance_cm
+    right_distance_cm = distance_cm if right_distance_cm is None else right_distance_cm
     return SensorSnapshot(
-        now_s, 0.02, distance_cm, distance_cm, distance_cm, 20.0, 20.0, 20.0,
+        now_s, 0.02, distance_cm, left_distance_cm, right_distance_cm,
+        0.5 * (left_speed_cm_s + right_speed_cm_s),
+        left_speed_cm_s, right_speed_cm_s,
         0.0, math.radians(heading_deg), distance_cm, 0.0, orange, blue,
         ToFSnapshot(now_s, tuple(channels)),  # type: ignore[arg-type]
         VisionSnapshot(now_s, {"pillars": [], "parking": {}, "walls": {}, "track_lines": {}},
@@ -1577,8 +1767,138 @@ def _mock_snapshot(
     )
 
 
+def run_watchdog_dry_run_checks() -> int:
+    """Exercise command-relative watchdog and active-high Start gating."""
+    cfg = FSMConfig()
+    base = 10_000.0
+
+    def new_fsm() -> SensorFusionFSM:
+        fsm = SensorFusionFSM(ChallengeMode.OPEN, config=cfg, dry_run=True)
+        fsm.started = True
+        fsm.state = State.DETERMINE_DIRECTION
+        fsm._reset_encoder_watchdog(base, 0.0, 0.0)
+        return fsm
+
+    # 1. Ten seconds of initialization cannot age a watchdog that has no command.
+    fsm = new_fsm()
+    first = _mock_snapshot(
+        base + 10.0, 0.0, left_distance_cm=0.0, right_distance_cm=0.0,
+        left_speed_cm_s=0.0, right_speed_cm_s=0.0,
+    )
+    fsm.last_snapshot = first
+    assert fsm._safety_fault(first) is None
+    fsm.apply_command(ControlCommand("f", cfg.localisation_duty, 0.0, "test"))
+    early = _mock_snapshot(
+        base + 10.10, 0.0, left_distance_cm=0.0, right_distance_cm=0.0,
+        left_speed_cm_s=0.0, right_speed_cm_s=0.0,
+    )
+    assert fsm._safety_fault(early) is None
+
+    # 2. A genuine absence of progress faults after grace + timeout.
+    failed = _mock_snapshot(
+        base + 10.0 + cfg.encoder_startup_grace_s
+        + cfg.no_encoder_motion_timeout_s + 0.01,
+        0.0, left_distance_cm=0.0, right_distance_cm=0.0,
+        left_speed_cm_s=0.0, right_speed_cm_s=0.0,
+    )
+    fault = fsm._safety_fault(failed)
+    assert fault is not None and "neither encoder" in fault
+
+    # 3. One pulse-sized distance increase during grace confirms movement.
+    fsm = new_fsm()
+    start = _mock_snapshot(
+        base + 20.0, 0.0, left_distance_cm=0.0, right_distance_cm=0.0,
+        left_speed_cm_s=0.0, right_speed_cm_s=0.0,
+    )
+    fsm.last_snapshot = start
+    fsm.apply_command(ControlCommand("f", 0.20, 0.0, "test"))
+    moved = _mock_snapshot(
+        base + 20.3, 0.205, left_distance_cm=0.41, right_distance_cm=0.0,
+        left_speed_cm_s=0.5, right_speed_cm_s=0.0,
+    )
+    assert fsm._safety_fault(moved) is None
+
+    # 4. Stop clears timing; a later restart gets a fresh command timestamp.
+    fsm.last_snapshot = moved
+    fsm.apply_command(ControlCommand("s", 0.0, 0.0, "test stop"))
+    assert fsm._motion_command_started_s is None
+    restarted = _mock_snapshot(
+        base + 30.0, 0.205, left_distance_cm=0.41, right_distance_cm=0.0,
+        left_speed_cm_s=0.0, right_speed_cm_s=0.0,
+    )
+    fsm.last_snapshot = restarted
+    fsm.apply_command(ControlCommand("f", 0.20, 0.0, "test restart"))
+    assert fsm._motion_command_started_s == restarted.timestamp_s
+    assert fsm._safety_fault(_mock_snapshot(
+        base + 30.1, 0.205, left_distance_cm=0.41, right_distance_cm=0.0,
+        left_speed_cm_s=0.0, right_speed_cm_s=0.0,
+    )) is None
+
+    # 5. One wheel prevents total no-motion, then produces a side-specific fault.
+    fsm = new_fsm()
+    start = _mock_snapshot(
+        base + 40.0, 0.0, left_distance_cm=0.0, right_distance_cm=0.0,
+        left_speed_cm_s=0.0, right_speed_cm_s=0.0,
+    )
+    fsm.last_snapshot = start
+    fsm.apply_command(ControlCommand("f", 0.20, 0.0, "test one-sided"))
+    for offset_s, left_cm in ((0.3, 0.41), (0.9, 0.82), (1.3, 1.23)):
+        one_side = _mock_snapshot(
+            base + 40.0 + offset_s, left_cm / 2.0,
+            left_distance_cm=left_cm, right_distance_cm=0.0,
+            left_speed_cm_s=5.0, right_speed_cm_s=0.0,
+        )
+        assert fsm._safety_fault(one_side) is None
+    final_one_side = _mock_snapshot(
+        base + 42.2, 0.82, left_distance_cm=1.64, right_distance_cm=0.0,
+        left_speed_cm_s=5.0, right_speed_cm_s=0.0,
+    )
+    one_side_fault = fsm._safety_fault(final_one_side)
+    assert one_side_fault is not None and "right encoder" in one_side_fault
+
+    # 6. Already-HIGH input cannot start; stable release and a new press can.
+    gate = ActiveHighPressGate(0.05)
+    assert not gate.update(True, base)
+    assert not gate.update(True, base + 1.0)
+    assert not gate.update(False, base + 1.01)
+    assert not gate.update(False, base + 1.07)
+    assert not gate.update(True, base + 1.08)
+    assert gate.update(True, base + 1.14)
+
+    # 7. The sole production initializer explicitly constructs active-high Start.
+    initializer_path = Path(__file__).with_name("initialize_hardware.py")
+    initializer_tree = ast.parse(initializer_path.read_text(encoding="utf-8"))
+    start_button_calls = [
+        node for node in ast.walk(initializer_tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "Button"
+    ]
+    assert len(start_button_calls) == 1
+    pull_up_keywords = [
+        keyword for keyword in start_button_calls[0].keywords
+        if keyword.arg == "pull_up"
+    ]
+    assert (
+        len(pull_up_keywords) == 1
+        and isinstance(pull_up_keywords[0].value, ast.Constant)
+        and pull_up_keywords[0].value.value is False
+    )
+    fsm_tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+    assert not any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "Button"
+        for node in ast.walk(fsm_tree)
+    )
+
+    print("[WatchdogTest] PASS: 7 watchdog, imbalance, Start-edge/configuration checks")
+    return 0
+
+
 def run_dry_run(mode: ChallengeMode, debug: bool = False) -> int:
     """Deterministically exercise direction, 12 corners, finish/parking safety."""
+    run_watchdog_dry_run_checks()
     fsm = SensorFusionFSM(mode, dry_run=True, debug=debug)
     fsm.started = True
     fsm.state = State.DETERMINE_DIRECTION
@@ -1650,6 +1970,22 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--dry-run", action="store_true", help="no GPIO; exercise transitions")
     parser.add_argument(
+        "--watchdog-self-test", action="store_true",
+        help="no GPIO; run encoder-watchdog and Start-edge checks only",
+    )
+    parser.add_argument(
+        "--encoder-diagnostic", action="store_true",
+        help="bounded real-hardware motor/encoder response test",
+    )
+    parser.add_argument(
+        "--diagnostic-duty", type=float, default=0.20,
+        help="encoder diagnostic motor duty (default: 0.20)",
+    )
+    parser.add_argument(
+        "--diagnostic-duration-s", type=float, default=2.5,
+        help="encoder diagnostic run duration (default: 2.5 s)",
+    )
+    parser.add_argument(
         "--tof-diagnostic", action="store_true",
         help="print wiring/address/role mapping and live distances"
     )
@@ -1671,11 +2007,143 @@ def run_tof_diagnostic() -> int:
         reader.stop()
 
 
+def run_encoder_diagnostic(duty: float, duration_s: float) -> int:
+    """Run a bounded motor/encoder test after a clean active-high Start press."""
+    from main.initialize_hardware import PIN_START_BUTTON, initialize_hardware
+
+    duty = max(0.0, min(FSMConfig().max_duty, float(duty)))
+    duration_s = max(0.5, min(5.0, float(duration_s)))
+    start_button = encoders = color = car = robot = ekf = None
+    leds: List[Any] = []
+    try:
+        (
+            start_button, leds, encoders, color, car, robot, ekf
+        ) = initialize_hardware()
+        car.stop()
+        actual_pull_up = getattr(start_button, "pull_up", False)
+        if actual_pull_up is not False:
+            raise RuntimeError(
+                f"Start button pull_up must be False, got {actual_pull_up!r}"
+            )
+        print(
+            f"[EncoderDiag] Start GPIO={PIN_START_BUTTON}, pull_up=False "
+            "(active-high with internal pull-down)"
+        )
+        print(
+            "[EncoderDiag] SAFETY: lift the driven wheels or place the robot in "
+            "a clear, controlled test area."
+        )
+        gate = ActiveHighPressGate(0.05)
+        if start_button.is_pressed:
+            print("[Start] Waiting for button release...")
+        ready_reported = False
+        while True:
+            car.stop()
+            now_s = time.monotonic()
+            accepted = gate.update(bool(start_button.is_pressed), now_s)
+            if gate.release_confirmed and not ready_reported:
+                print(
+                    "[Start] Ready; waiting for active-high press on GPIO 8, "
+                    "pull_up=False"
+                )
+                ready_reported = True
+            if accepted:
+                print("[Start] Stable press accepted")
+                break
+            time.sleep(0.01)
+
+        encoders.reset()
+        left0, right0 = encoders.get_distances()
+        print(
+            f"[EncoderDiag] Applying direction=f duty={duty:.2f} for "
+            f"{duration_s:.2f}s (automatic stop)"
+        )
+        started_s = time.monotonic()
+        next_log_s = started_s
+        car.set_steering(0.0)
+        car.set_motor("f", duty)
+        while True:
+            now_s = time.monotonic()
+            if now_s - started_s >= duration_s:
+                break
+            if now_s >= next_log_s:
+                left_cm, right_cm = encoders.get_distances()
+                left_speed, right_speed = encoders.get_linear_speeds()
+                print(
+                    f"[EncoderDiag] direction=f duty={duty:.2f} "
+                    f"left={left_cm:.3f}cm right={right_cm:.3f}cm "
+                    f"left_speed={left_speed:.1f}cm/s "
+                    f"right_speed={right_speed:.1f}cm/s "
+                    f"left_progress={left_cm-left0 >= FSMConfig().encoder_progress_epsilon_cm} "
+                    f"right_progress={right_cm-right0 >= FSMConfig().encoder_progress_epsilon_cm}"
+                )
+                next_log_s += 0.20
+            time.sleep(0.01)
+        car.stop()
+        left_cm, right_cm = encoders.get_distances()
+        epsilon = FSMConfig().encoder_progress_epsilon_cm
+        left_ok, right_ok = left_cm - left0 >= epsilon, right_cm - right0 >= epsilon
+        if left_ok and right_ok:
+            print("[EncoderDiag] PASS: motor moved and both encoders reported progress.")
+            return 0
+        if not left_ok and not right_ok:
+            print(
+                "[EncoderDiag] FAIL: neither encoder responded. The motor may not "
+                "have overcome static friction at this duty, the motor command/wiring "
+                "may be ineffective, or both encoder inputs/polarity may be wrong."
+            )
+        elif left_ok:
+            print(
+                "[EncoderDiag] FAIL: only the left encoder responded; inspect the "
+                "right encoder, GPIO 5 wiring, alignment, and active-low pulse output."
+            )
+        else:
+            print(
+                "[EncoderDiag] FAIL: only the right encoder responded; inspect the "
+                "left encoder, GPIO 7 wiring, alignment, and active-low pulse output."
+            )
+        if duty < FSMConfig().minimum_effective_motor_duty:
+            print(
+                "[EncoderDiag] NOTE: requested duty is below the configured "
+                "minimum_effective_motor_duty, so rotation is not expected reliably."
+            )
+        elif duty <= FSMConfig().localisation_duty:
+            print(
+                "[EncoderDiag] NOTE: duty may be below the drivetrain motor deadband; "
+                "observe whether the wheels physically rotated before blaming encoders."
+            )
+        return 2
+    except KeyboardInterrupt:
+        print("[EncoderDiag] Interrupted; stopping.")
+        return 130
+    finally:
+        if car is not None:
+            try:
+                car.stop()
+                car.set_steering(0.0)
+            except Exception as exc:
+                print(f"[EncoderDiag] cleanup warning: {exc}")
+        if color is not None:
+            try:
+                color.stop()
+            except Exception:
+                pass
+        for led in leds:
+            try:
+                led.off()
+            except Exception:
+                pass
+
+
 def main(argv: Optional[Iterable[str]] = None) -> int:
     args = parse_args(argv)
     mode = ChallengeMode(args.mode)
     if args.tof_diagnostic:
         return run_tof_diagnostic()
+    if args.encoder_diagnostic:
+        return run_encoder_diagnostic(args.diagnostic_duty, args.diagnostic_duration_s)
+    if args.watchdog_self_test:
+        return run_watchdog_dry_run_checks()
     if args.dry_run:
         print_tof_mapping()
         return run_dry_run(mode, args.debug)
