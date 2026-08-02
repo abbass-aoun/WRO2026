@@ -5,9 +5,10 @@ import cv2 as cv
 
 from enum import Enum, auto
 
-from config import DT_S
+from config import DT_S 
 
 from trajectory.builder import TrajectoryBuilder, RED, GREEN
+from control.tof_sensor import ToFSensors
 
 from main.support import calibrate_gyro
 from main.vision_adapter import VisionThread, transform_to_global
@@ -38,7 +39,7 @@ class SectionState(Enum):
 #-----------------------------------------------------------
 
 TEST_SPEED = 0.35
-CORNER_DUTY = 0.30
+CORNER_DUTY = 0.35
 
 driving_direction = DrivingDirection.UNKNOWN
 state = State.WAITING
@@ -57,7 +58,12 @@ laps = 0
 INITIAL_THETA = 0.0  # radians (The robot starts facing along the global +X axis).
 target_theta = 0.0 
 
-HEADING_DEADBAND_RAD = math.radians(1.0) # minimum error in heading direction for correction (reduces switches and movement in servo)
+HEADING_DEADBAND_RAD = math.radians(1.5) # minimum error in heading direction for correction (reduces switches and movement in servo)
+STRAIGHT_KP = 0.15          # servo degrees per heading-error degree
+STRAIGHT_MAX_DEG = 6.0
+MAX_STEERING_CHANGE = 0.5   # maximum change per control update
+
+_previous_straight_steering = 0.0
 
 DEBOUNCE_S = 0.3 # time between section transitions
 _last_transition_time = 0.0 # last time where we transitioned between corner and straight section
@@ -474,29 +480,41 @@ def update_target_theta():
 
 
 def calculate_straight_steering(theta):
-    """
-    Keep the robot aligned with the target heading.
-
-    theta:
-        Current robot heading from the EKF, in radians.
-
-    Returns:
-        Steering correction in degrees.
-    """
+    global _previous_straight_steering
 
     heading_error = normalize_angle(
         theta - target_theta
     )
 
-    # Ignore very small heading fluctuations
+    heading_error_deg = math.degrees(heading_error)
+
     if abs(heading_error) < HEADING_DEADBAND_RAD:
-        return 0.0
+        desired_steering = 0.0
+    else:
+        desired_steering = STRAIGHT_KP * heading_error_deg
 
-    weighted_error = PID_HEADING_W * heading_error
-
-    steering_deg = straight_pid._compute(
-        weighted_error
+    # Limit straight-line corrections
+    desired_steering = max(
+        -STRAIGHT_MAX_DEG,
+        min(STRAIGHT_MAX_DEG, desired_steering)
     )
+
+    # Prevent sudden servo movements
+    minimum = (
+        _previous_straight_steering
+        - MAX_STEERING_CHANGE
+    )
+    maximum = (
+        _previous_straight_steering
+        + MAX_STEERING_CHANGE
+    )
+
+    steering_deg = max(
+        minimum,
+        min(maximum, desired_steering)
+    )
+
+    _previous_straight_steering = steering_deg
 
     return steering_deg
 
@@ -1010,8 +1028,16 @@ def reset_race():
 
 def main():
     global state
-    global finish_entry_x
-    global finish_entry_y
+    global target_theta
+    global _previous_straight_steering
+
+    target_theta = 0.0
+    _previous_straight_steering = 0.0
+
+    TARGET_DISTANCE_CM = 100.0
+    MOTOR_DUTY = 0.38
+    MAX_RUN_TIME_S = 8.0
+    LOOP_PERIOD_S = 0.02
 
     reset_race()
 
@@ -1022,247 +1048,133 @@ def main():
         color,
         car,
         robot,
-        ekf
+        ekf,
     ) = initialize_hardware()
 
-    vision = VisionThread()
-    vision.start()
-
-    # Robot must remain still
-    gyro_bias = calibrate_gyro(encoders)
-
-
-    wait_for_start(
-        start_button,
-        leds
-    )
-
-
-    # Global coordinate origin
-    ekf.initialize(
-        x0=0.0,
-        y0=0.0,
-        theta0=0.0
-    )
-
-    encoders.reset()
-    robot.reset()
-
-    # First straight is +X
-    update_target_theta()
-
-    last_time = time.monotonic()
-
+    print("\n=== EKF STRAIGHT-MOTION TEST ===")
+    print("The robot will drive approximately 100 cm.")
+    print("Place it facing along a measured straight reference line.")
+    print("Keep the robot still during gyro calibration.\n")
 
     try:
+        car.stop()
+        car.set_steering(0)
+        robot.update_steering(0)
+
+        gyro_bias = calibrate_gyro(encoders)
+
+        wait_for_start(start_button, leds)
+
+        while start_button.is_pressed:
+            time.sleep(0.05)
+
+        encoders.reset()
+        robot.reset()
+
+        ekf.initialize(
+            x0=0.0,
+            y0=0.0,
+            theta0=0.0,
+        )
+
+        previous_left_cm, previous_right_cm = encoders.get_distances()
+        previous_average_cm = 0.5 * (
+            previous_left_cm + previous_right_cm
+        )
+
+        start_time = time.monotonic()
+        previous_time = start_time
+        previous_print_time = start_time
 
         while state == State.RUNNING:
-
             now = time.monotonic()
+            dt = now - previous_time
 
-            dt = now - last_time
-            last_time = now
+            if dt < LOOP_PERIOD_S:
+                time.sleep(LOOP_PERIOD_S - dt)
+                continue
 
+            previous_time = now
 
-            # ==========================================
-            # 1. SENSORS + EKF
-            # ==========================================
+            left_cm, right_cm = encoders.get_distances()
+            average_cm = 0.5 * (left_cm + right_cm)
 
-            (
-                speed,
-                v_l,
-                v_r,
-                omega,
-                x,
-                y,
-                theta,
-                orange_seen,
-                blue_seen
+            delta_distance_cm = average_cm - previous_average_cm
+            previous_average_cm = average_cm
 
-            ) = read_sensors_and_update_ekf(
-                encoders,
-                color,
-                ekf,
-                robot,
-                dt,
-                gyro_bias
+            # Speed based on distance travelled during this loop,
+            # not time since the latest encoder pulse.
+            speed_cm_s = delta_distance_cm / dt if dt > 0 else 0.0
+
+            omega_rad_s = encoders.get_yaw_rate() - gyro_bias
+
+            ekf.predict(
+                speed=speed_cm_s,
+                steer_angle=0.0,
+                dt=dt,
+                omega_gyro=omega_rad_s,
             )
 
-            # ==========================================
-            # 2. UPDATE TRACK SECTION
-            # ==========================================
-            
-            
-            vision_result = vision.get_latest_result()
+            x, y, theta = ekf.state
 
-            vision_result = transform_to_global(
-                vision_result,
-                x,
-                y,
-                theta,
+            steering_deg = calculate_straight_steering(theta)
+
+            robot.update_steering(steering_deg)
+
+            car.set_all(
+                direction="f",
+                speed=0.35,
+                angle=steering_deg,
             )
 
-            # Camera frame remains available for pillar detections
-            # and visual debugging.
-            debug_frame = vision.get_latest_frame()
+            robot.update_pose(x, y, theta)
+            robot.update_speed(speed_cm_s)
 
-            if debug_frame is not None:
-                cv.imshow(
-                    "WRO Vision",
-                    debug_frame,
-                )
-                cv.waitKey(1)
-
-            pillars = vision_result.get(
-                "pillars",
-                [],
-            )
-
-            # Debug only the physical TCS3200 sensor
-            print(
-                f"TCS: O={orange_seen} B={blue_seen}"
-            )
-
-            # Track-section changes now depend only on TCS3200
-            transition = add_section(
-                orange_seen,
-                blue_seen,
-            )
-
-
-            # New corner started
-            if transition == "ENTER_CORNER":
-                clear_pillar()
-                straight_pid.reset()
-
-
-            # Corner finished -> new straight
-            elif transition == "EXIT_CORNER":
-
-                update_target_theta()
-
-                straight_pid.reset()
-
-
-                # Three laps complete:
-                # we have just entered the finish straight.
-                if laps >= 3:
-
-                    finish_entry_x = x
-                    finish_entry_y = y
-
-
-            # ==========================================
-            # 3. FINISH LOGIC
-            # ==========================================
-
-            if (
-                laps >= 3
-                and finish_entry_x is not None
-            ):
-
-                distance_into_finish = math.hypot(
-                    x - finish_entry_x,
-                    y - finish_entry_y
+            if now - previous_print_time >= 0.10:
+                print(
+                    f"x={x:6.2f} cm | "
+                    f"y={y:6.2f} cm | "
+                    f"theta={math.degrees(theta):+6.2f}° | "
+                    f"steer={steering_deg:+5.2f}°"
                 )
 
-                if distance_into_finish >= 40.0:
+                previous_print_time = now
 
-                    print("Finish section reached.")
+            if average_cm >= TARGET_DISTANCE_CM:
+                print("\nTarget encoder distance reached.")
+                break
 
-                    state = State.FINISHED
-
-                    break
-
-
-            # ==========================================
-            # 4. CHOOSE CONTROLLER
-            # ==========================================
-
-            if section_state == SectionState.STRAIGHT:
-
-                # Continue an existing swerve even if the pillar
-                # has disappeared from the camera.
-    
-                if (
-                    pillar_initialized
-                    or pillar_in_range(
-                        pillars,
-                        x,
-                        y,
-                        theta,
-                    )
-                ):
-
-                    steering, pillar_done = pillar_step(
-                        car,
-                        robot,
-                        pillars,
-                        x,
-                        y,
-                        theta,
-                        straight_pid,
-                    )
-
-                    if pillar_done:
-                        straight_pid.reset()
-
-                else:
-
-                    steering = take_step(
-                        car,
-                        robot,
-                        theta,
-                    )
-
-            elif section_state == SectionState.CORNER:
-
-                steering = corner_step(
-                    car,
-                    robot,
-                    x,
-                    y,
-                    theta,
-                    straight_pid
-                )
-
-
-            # ==========================================
-            # 5. DEBUG
-            # ==========================================
-
-            print(
-                f"section={section_state.name} | "
-                f"dir={driving_direction.name} | "
-                f"lap={laps} | "
-                f"corner={corners_completed} | "
-                f"theta={math.degrees(theta):+.1f}° | "
-                f"target={math.degrees(target_theta):+.1f}° | "
-                f"steer={steering:+.1f}°"
-            )
-
-
-            # ==========================================
-            # 6. CONTROL LOOP RATE
-            # ==========================================
-
-            elapsed = time.monotonic() - now
-
-            if elapsed < DT_S:
-                time.sleep(DT_S - elapsed)
-
-
-    finally:
+            if now - start_time >= MAX_RUN_TIME_S:
+                print("\nSafety timeout reached.")
+                break
 
         car.stop()
-        vision.stop()
+
+        left_cm, right_cm = encoders.get_distances()
+        average_cm = 0.5 * (left_cm + right_cm)
+        x, y, theta = ekf.state
+
+        print("\n=== FINAL EKF RESULT ===")
+        print(f"Left encoder:    {left_cm:.2f} cm")
+        print(f"Right encoder:   {right_cm:.2f} cm")
+        print(f"Average distance:{average_cm:.2f} cm")
+        print(f"EKF X:           {x:.2f} cm")
+        print(f"EKF Y:           {y:.2f} cm")
+        print(f"EKF heading:     {math.degrees(theta):+.2f}°")
+
+    except KeyboardInterrupt:
+        print("\nTest interrupted.")
+
+    finally:
+        car.stop()
+        car.set_steering(0)
         color.stop()
-        cv.destroyAllWindows()
 
         for led in leds:
             led.off()
 
         state = State.FINISHED
+        print("Hardware stopped safely.")
     
 if __name__ == "__main__":
     main()

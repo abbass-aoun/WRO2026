@@ -32,9 +32,15 @@ WHEELBASE_CM    = 16.5   # front-to-rear axle distance (cm)
 ROBOT_LENGTH_CM = 30.0   # overall body length (cm)
 ROBOT_WIDTH_CM  = 12.0   # overall body width  (cm)
 
-SERVO_CENTER_DEG = 60.0  # absolute servo angle that makes wheels straight
+
+STRAIGHT_STEERING_TRIM_DEG = 1.35 # Steering calibration
+
+SERVO_CENTER_DEG = 60.0 + STRAIGHT_STEERING_TRIM_DEG  # absolute servo angle that makes wheels straight
 SERVO_MAX_DEG = 18.0     # or your current chosen maximum
 
+
+PULSES_PER_REV = 20
+WHEEL_CIRC_CM = 21.0
 # ─────────────────────────────────────────────────────────────────────────────
 # Motion                                                 TUNE ON REAL ROBOT
 # ─────────────────────────────────────────────────────────────────────────────

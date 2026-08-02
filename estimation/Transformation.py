@@ -25,29 +25,24 @@ def camera_to_world(
         positive theta = CCW
     """
 
-    # Convert mm -> cm
-    right_cm = relative_x_mm / 10.0
-    forward_cm = relative_y_mm / 10.0
+    # Convert mm -> cm and change coordinate system to fit the usual rotation matrix
+    robot_local_x_cm = relative_y_mm / 10.0
+    robot_local_y_cm = -relative_x_mm / 10.0
 
     cos_t = math.cos(robot_theta_rad)
     sin_t = math.sin(robot_theta_rad)
-
-    # Forward direction in world coordinates:
-    # (cos(theta), sin(theta))
-    #
-    # Right direction in world coordinates:
-    # (sin(theta), -cos(theta))
-
+    
+    
     global_x = (
         robot_x_cm
-        + forward_cm * cos_t
-        + right_cm * sin_t
+        + robot_local_x_cm * cos_t
+        - robot_local_y_cm * sin_t
     )
 
     global_y = (
         robot_y_cm
-        + forward_cm * sin_t
-        - right_cm * cos_t
+        + robot_local_x_cm * sin_t
+        + robot_local_y_cm * cos_t
     )
 
     return global_x, global_y

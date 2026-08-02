@@ -62,8 +62,8 @@ class RobotEncoders:
     def __init__(self,
                  wheel_left_pin:  int   = 27,
                  wheel_right_pin: int   = 19,
-                 pulses_per_rev:  int   = 50,
-                 wheel_circ_cm:   float = 20.48):
+                 pulses_per_rev:  int   = 20,
+                 wheel_circ_cm:   float = 21.0):
         """
         Args:
             wheel_left_pin  : BCM GPIO for left  encoder IR sensor.  TUNE ON REAL ROBOT.

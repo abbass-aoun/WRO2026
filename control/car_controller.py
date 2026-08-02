@@ -3,7 +3,7 @@ from time import time, sleep
 from control.servoClass import myServo
 from control.allEncodersClass import RobotEncoders
 from control.brake_controller import BrakePIDController
-from config import MOTOR_INVERTED, SERVO_MAX_DEG, SERVO_CENTER_DEG
+from config import MOTOR_INVERTED, SERVO_MAX_DEG, SERVO_CENTER_DEG, STRAIGHT_STEERING_TRIM_DEG
 
 
 class CarController:
@@ -34,8 +34,19 @@ class CarController:
         else:
             self.stop()
 
-    def set_steering(self, angle):
-        self.servo.set_servo_angle(angle)
+    def set_steering(self, steering_deg):
+        """
+        Set steering relative to the robot's true straight direction.
+
+        steering_deg:
+            0     = straight
+            > 0   = right
+            < 0   = left
+        """
+        calibrated_angle = steering_deg + STRAIGHT_STEERING_TRIM_DEG
+
+        # Use the existing servo command here.
+        self.servo.set_servo_angle(calibrated_angle)
      
 
     def set_all(self, direction, speed, angle):

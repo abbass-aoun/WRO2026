@@ -66,8 +66,8 @@ class ColorSensor:
         s3:            int   = 23,    # GPIO pin — color filter select
         out_pin:       int   = 24,    # GPIO pin — pulse output from sensor
         led_pin:       int   = 25,    # GPIO pin — onboard illumination LEDs
-        sample_time:   float = 0.010, # seconds per channel reading
-        poll_interval: float = 0.050, # pause between complete RGB reads
+        sample_time:   float = 0.005, # seconds per channel reading
+        poll_interval: float = 0.002, # pause between complete RGB reads
     ):
         """
         Args:
@@ -140,22 +140,27 @@ class ColorSensor:
             b = self._read_channel(*self._BLUE)
 
             self.rgb = (r, g, b)
-
+            total = r + g + b
             # Orange: R strongly dominant over B and G.
             # Ratio-based so ambient light level doesn't matter.
             # TUNE ON REAL ROBOT if false positives occur.
             self.orange_seen = (
-                r > 2000
-                and r > b * 1.5 
-                and r > g * 0.7
+                4000 <= r <= 12000
+                and 2000 <= g <= 8000
+                and 1000 <= b <= 6000
+                and r > g * 1.35
+                and r > b * 1.70
             )
 
             # Blue: B strongly dominant over R and G.
             # TUNE ON REAL ROBOT if false positives occur.
-            self.blue_seen   = (
-                b > 2000
-                and b > r * 1.5 
-                and b > g * 0.7
+            self.blue_seen = (
+                800 <= r <= 4500
+                and 800 <= g <= 5000
+                and 1800 <= b <= 6500
+                and total <= 12000
+                and b > r * 1.60
+                and b > g * 1.50
             )
 
             sleep(self._poll_interval)
