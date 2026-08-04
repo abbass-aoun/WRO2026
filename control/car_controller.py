@@ -43,10 +43,10 @@ class CarController:
             > 0   = right
             < 0   = left
         """
-        calibrated_angle = steering_deg + STRAIGHT_STEERING_TRIM_DEG
+        
 
         # Use the existing servo command here.
-        self.servo.set_servo_angle(calibrated_angle)
+        self.servo.set_servo_angle(steering_deg)
      
 
     def set_all(self, direction, speed, angle):

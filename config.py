@@ -33,7 +33,7 @@ ROBOT_LENGTH_CM = 30.0   # overall body length (cm)
 ROBOT_WIDTH_CM  = 12.0   # overall body width  (cm)
 
 
-STRAIGHT_STEERING_TRIM_DEG = 1.35 # Steering calibration
+STRAIGHT_STEERING_TRIM_DEG = 3.0 # Steering calibration
 
 SERVO_CENTER_DEG = 60.0 + STRAIGHT_STEERING_TRIM_DEG  # absolute servo angle that makes wheels straight
 SERVO_MAX_DEG = 18.0     # or your current chosen maximum
@@ -142,7 +142,7 @@ SIM_STAT_RUNS       =  3      # random scenarios for end-of-run statistics (0 = 
 # SHOW_VISION_DEBUG : open a live camera overlay window on the main thread.
 #                     Needs a connected display.  Leave False at competition.
 MOTOR_INVERTED    = True   # flip to True if robot drives backward on 'f'
-MAX_DUTY_SAFE     = 0.40    # TUNE: raise gradually after bench tests pass
+MAX_DUTY_SAFE     = 0.55    # TUNE: raise gradually after bench tests pass
 SHOW_VISION_DEBUG = False   # True = live camera window (display must be attached)
 
 

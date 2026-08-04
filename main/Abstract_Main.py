@@ -37,8 +37,7 @@ class SectionState(Enum):
     CORNER = auto()
 
 #-----------------------------------------------------------
-TEST_SPEED = 0.38 
-CORNER_DUTY = 0.35
+
 
 driving_direction = DrivingDirection.UNKNOWN
 state = State.WAITING
@@ -57,10 +56,10 @@ laps = 0
 INITIAL_THETA = 0.0  # radians (The robot starts facing along the global +X axis).
 target_theta = 0.0 
 
-HEADING_DEADBAND_RAD = math.radians(1.5) # minimum error in heading direction for correction (reduces switches and movement in servo)
-STRAIGHT_KP = 0.2          # servo degrees per heading-error degree
-STRAIGHT_MAX_DEG = 10.0
-MAX_STEERING_CHANGE = 4.0   # maximum change per control update
+HEADING_DEADBAND_RAD = math.radians(1.0) # minimum error in heading direction for correction (reduces switches and movement in servo)
+STRAIGHT_KP = 0.25          # servo degrees per heading-error degree
+STRAIGHT_MAX_DEG = 12.0
+MAX_STEERING_CHANGE = 6.0   # maximum change per control update
 
 _previous_straight_steering = 0.0
 
@@ -70,7 +69,11 @@ _last_transition_time = 0.0 # last time where we transitioned between corner and
 
 # Minimum forward progress required before accepting the
 # next STRAIGHT -> CORNER line detection.
-MIN_STRAIGHT_PROGRESS_CM = 95
+MIN_STRAIGHT_PROGRESS_CM = 100
+FIRST_LINE_MIN_PROGRESS_CM = 10.0
+
+first_line_ref_x = None
+first_line_ref_y = None
 
 # EKF position where the current straight section began.
 straight_ref_x = None
@@ -96,6 +99,7 @@ from config import(
     PID_HEADING_W,
     SERVO_MAX_DEG,
     CORNER_RADIUS_CM,
+    WHEELBASE_CM,
 
     PILLAR_CLEARANCE_CM,
     PILLAR_TRIGGER_CM,
@@ -172,6 +176,20 @@ def read_sensors_and_update_ekf(encoders, color, ekf, robot, dt, gyro_bias):
     return speed, v_l, v_r, omega, x, y, theta, color.orange_seen, color.blue_seen
 
 
+def initialize_first_line_reference(x, y):
+    """
+    Records the EKF position where the race begins.
+
+    The first orange or blue line will only be accepted after
+    the robot has moved FIRST_LINE_MIN_PROGRESS_CM forward.
+    """
+    global first_line_ref_x
+    global first_line_ref_y
+
+    first_line_ref_x = x
+    first_line_ref_y = y
+
+
 def confirm_floor_line(orange_seen, blue_seen, robot_x, robot_y):
     """
     Validate a floor-line reading.
@@ -193,6 +211,21 @@ def confirm_floor_line(orange_seen, blue_seen, robot_x, robot_y):
     # The starting position may be close to this line,
     # so no minimum-distance condition is applied.
     if driving_direction == DrivingDirection.UNKNOWN:
+
+        if first_line_ref_x is None or first_line_ref_y is None:
+            return False, False
+
+        dx = robot_x - first_line_ref_x
+        dy = robot_y - first_line_ref_y
+
+        first_line_progress_cm = (
+            dx * math.cos(INITIAL_THETA)
+            + dy * math.sin(INITIAL_THETA)
+        )
+
+        if first_line_progress_cm < FIRST_LINE_MIN_PROGRESS_CM:
+            return False, False
+
         return orange_seen, blue_seen
 
     # While cornering, pass the detection to add_section().
@@ -428,20 +461,6 @@ def calculate_straight_steering(theta):
     _previous_straight_steering = steering_deg
 
     return steering_deg
-
-def take_step(car, robot, theta):
-
-    steering_deg = calculate_straight_steering(theta)
-
-    robot.update_steering(steering_deg)
-
-    car.set_all(
-        direction='f',
-        speed=TEST_SPEED,
-        angle=steering_deg
-    )
-
-    return steering_deg    
 
 
 def _pillars_ahead(pillars, x, y, theta):
@@ -797,7 +816,8 @@ def corner_step(
     x,
     y,
     theta,
-    steering_pid
+    steering_pid,
+    motor_duty
 ):
     global current_trajectory
     global near_s
@@ -871,21 +891,51 @@ def corner_step(
     # Steering
     # --------------------------------------------
 
-    steering_deg = steering_pid._compute(
+    # PID corrects position and heading errors.
+    pid_correction_deg = steering_pid._compute(
         combined_error
+    )
+
+    # Base steering required by the corner geometry.
+    curvature = current_trajectory.get_curvature(
+        near_s
+    )
+
+    maximum_curvature = 1.0 / CORNER_RADIUS_CM
+
+    curvature = max(
+        -maximum_curvature,
+        min(maximum_curvature, curvature),
+    )
+
+    # Positive curvature means a left/CCW curve.
+    # Negative logical steering means left.
+    feedforward_deg = -math.degrees(
+        math.atan(
+            WHEELBASE_CM * curvature
+        )
+    )
+
+    steering_deg = (
+        feedforward_deg
+        + pid_correction_deg
     )
 
     steering_deg = max(
         -SERVO_MAX_DEG,
-        min(SERVO_MAX_DEG, steering_deg)
+        min(
+            SERVO_MAX_DEG,
+            steering_deg,
+        ),
     )
 
+    
 
     robot.update_steering(steering_deg)
 
     car.set_all(
         direction='f',
-        speed=CORNER_DUTY,
+        speed=motor_duty,
         angle=steering_deg
     )
 
@@ -907,6 +957,8 @@ def reset_race():
     global finish_entry_y
     global straight_ref_x
     global straight_ref_y
+    global first_line_ref_x
+    global first_line_ref_y
 
     driving_direction = DrivingDirection.UNKNOWN
 
@@ -931,6 +983,9 @@ def reset_race():
     straight_ref_x = None
     straight_ref_y = None
 
+    first_line_ref_x = None
+    first_line_ref_y = None
+
     clear_pillar()
     straight_pid.reset()
 
@@ -940,7 +995,8 @@ def main():
     global target_theta
     global _previous_straight_steering
 
-    STRAIGHT_MOTOR_DUTY = 0.45
+    STRAIGHT_DUTY = 0.55
+    CORNER_DUTY = 0.45
     
 
     LOOP_PERIOD_S = 0.02
@@ -995,6 +1051,11 @@ def main():
             x0=0.0,
             y0=0.0,
             theta0=0.0,
+        )
+
+        initialize_first_line_reference(
+            x=0.0,
+            y=0.0,
         )
 
         target_theta = INITIAL_THETA
@@ -1184,7 +1245,8 @@ def main():
             # Select the active controller
             # -------------------------------------
             if section_state == SectionState.CORNER:
-
+                
+                
                 steering_deg = corner_step(
                     car=car,
                     robot=robot,
@@ -1192,6 +1254,7 @@ def main():
                     y=y,
                     theta=theta,
                     steering_pid=straight_pid,
+                    motor_duty=CORNER_DUTY
                 )
 
             else:
@@ -1207,7 +1270,7 @@ def main():
 
                 car.set_all(
                     direction="f",
-                    speed=STRAIGHT_MOTOR_DUTY,
+                    speed=STRAIGHT_DUTY,
                     angle=steering_deg,
                 )
 
