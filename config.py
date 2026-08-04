@@ -142,7 +142,7 @@ SIM_STAT_RUNS       =  3      # random scenarios for end-of-run statistics (0 = 
 # SHOW_VISION_DEBUG : open a live camera overlay window on the main thread.
 #                     Needs a connected display.  Leave False at competition.
 MOTOR_INVERTED    = True   # flip to True if robot drives backward on 'f'
-MAX_DUTY_SAFE     = 0.35    # TUNE: raise gradually after bench tests pass
+MAX_DUTY_SAFE     = 0.40    # TUNE: raise gradually after bench tests pass
 SHOW_VISION_DEBUG = False   # True = live camera window (display must be attached)
 
 
