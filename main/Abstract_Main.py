@@ -78,7 +78,15 @@ _last_transition_time = 0.0 # last time where we transitioned between corner and
 # next STRAIGHT -> CORNER line detection.
 MIN_STRAIGHT_PROGRESS_CM = 65.0
 FIRST_LINE_MIN_PROGRESS_CM = 15.0
-STRAIGHT_BACKUP_ENTRY_DISTANCE_CM = 135.0
+STRAIGHT_BACKUP_ENTRY_DISTANCE_CM = 120.0
+
+# True only when the current corner was entered because
+# the 140 cm backup activated.
+corner_entered_by_backup = False
+
+# Records whether the expected second line was seen.
+# It confirms the corner but no longer controls the exit.
+corner_exit_line_seen = False
 
 # A backup-entered corner may exit automatically when the
 # generated corner trajectory is nearly complete.
@@ -103,9 +111,6 @@ straight_ref_y = None
 straight_progress_ref_x = None
 straight_progress_ref_y = None
 
-# True only when the current corner was entered because
-# the 140 cm backup activated.
-corner_entered_by_backup = False
 
 pillar_initialized = False
 pillar_trajectory = None
@@ -272,7 +277,11 @@ def confirm_floor_line(orange_seen, blue_seen, robot_x, robot_y):
     return orange_seen, blue_seen
 
 
-def add_section(orange_seen, blue_seen):
+def add_section(
+    orange_seen,
+    blue_seen,
+    force_corner_exit=False,
+):
     global driving_direction
     global section_state
     global corners_completed
@@ -281,45 +290,85 @@ def add_section(orange_seen, blue_seen):
     global current_trajectory
     global near_s
     global _last_transition_time
+    global corner_exit_line_seen
 
     if state != State.RUNNING:
         return None
 
+    now = time.monotonic()
+
+    # =====================================================
+    # Forced CORNER -> STRAIGHT transition
+    # =====================================================
+    # This is called only after corner_step() reports that
+    # the corner trajectory has been completed.
+    if force_corner_exit:
+
+        if section_state != SectionState.CORNER:
+            return None
+
+        # Safety fallback. Normally the first-corner backup
+        # already assigns this direction before entering.
+        if driving_direction == DrivingDirection.UNKNOWN:
+            driving_direction = FIRST_CORNER_BACKUP_DIRECTION
+
+        # Retry on later loops if the transition is still
+        # inside the debounce period.
+        if now - _last_transition_time < DEBOUNCE_S:
+            return None
+
+        corners_completed += 1
+        section_state = SectionState.STRAIGHT
+
+        corner_initialized = False
+        current_trajectory = None
+        near_s = 0.0
+        corner_exit_line_seen = False
+
+        _last_transition_time = now
+
+        # Four completed corners form one lap.
+        if corners_completed >= 4:
+            corners_completed = 0
+            laps += 1
+
+            print(
+                f"Lap completed: {laps}/3"
+            )
+        else:
+            print(
+                f"Corner completed: "
+                f"{corners_completed}/4"
+            )
+
+        return "EXIT_CORNER"
+
+    # A normal sensor call requires exactly one color.
     if not (orange_seen or blue_seen):
         return None
 
-    now = time.monotonic()
-
-    if now - _last_transition_time < DEBOUNCE_S:
+    if orange_seen and blue_seen:
         return None
 
-
-    # --------------------------------------------
-    # First line determines driving direction
-    # --------------------------------------------
-
+    # =====================================================
+    # First line determines direction
+    # =====================================================
     if driving_direction == DrivingDirection.UNKNOWN:
 
-        if blue_seen and not orange_seen:
+        if blue_seen:
             driving_direction = DrivingDirection.CCW
             print("Direction detected: CCW")
 
-        elif orange_seen and not blue_seen:
+        elif orange_seen:
             driving_direction = DrivingDirection.CW
             print("Direction detected: CW")
-
-        else:
-            return None
-
 
     cw = driving_direction == DrivingDirection.CW
     ccw = driving_direction == DrivingDirection.CCW
 
-
-    # --------------------------------------------
+    # =====================================================
     # STRAIGHT -> CORNER
-    # --------------------------------------------
-
+    # =====================================================
     if section_state == SectionState.STRAIGHT:
 
         entering_corner = (
@@ -328,62 +377,51 @@ def add_section(orange_seen, blue_seen):
             (ccw and blue_seen)
         )
 
-        if entering_corner:
+        if not entering_corner:
+            return None
 
-            section_state = SectionState.CORNER
+        if now - _last_transition_time < DEBOUNCE_S:
+            return None
 
-            corner_initialized = False
-            current_trajectory = None
-            near_s = 0.0
+        section_state = SectionState.CORNER
 
-            _last_transition_time = now
+        corner_initialized = False
+        current_trajectory = None
+        near_s = 0.0
 
-            print("Entering corner")
+        # The second line has not been seen yet.
+        corner_exit_line_seen = False
 
-            return "ENTER_CORNER"
+        _last_transition_time = now
 
+        print("Entering corner")
 
-    # --------------------------------------------
-    # CORNER -> STRAIGHT
-    # --------------------------------------------
+        return "ENTER_CORNER"
 
-    elif section_state == SectionState.CORNER:
+    # =====================================================
+    # Exit-line confirmation while cornering
+    # =====================================================
+    if section_state == SectionState.CORNER:
 
-        exiting_corner = (
+        expected_exit_line = (
             (cw and blue_seen)
             or
             (ccw and orange_seen)
         )
 
-        if exiting_corner:
+        if (
+            expected_exit_line
+            and not corner_exit_line_seen
+        ):
+            corner_exit_line_seen = True
 
-            corners_completed += 1
+            print(
+                "[CORNER] Expected exit line detected. "
+                "Continuing until the corner trajectory "
+                "is complete."
+            )
 
-            section_state = SectionState.STRAIGHT
-
-            corner_initialized = False
-            current_trajectory = None
-            near_s = 0.0
-
-            _last_transition_time = now
-
-
-            # Four corners = one complete lap
-            if corners_completed >= 4:
-
-                corners_completed = 0
-                laps += 1
-
-                print(f"Lap completed: {laps}/3")
-
-            else:
-
-                print(
-                    f"Corner completed: "
-                    f"{corners_completed}/4"
-                )
-
-            return "EXIT_CORNER"
+            return "EXIT_LINE_SEEN"
 
     return None
 
@@ -1119,6 +1157,7 @@ def reset_race():
     global laps
     global target_theta
     global corner_initialized
+    global corner_exit_line_seen
     global current_trajectory
     global near_s
     global _last_transition_time
@@ -1148,6 +1187,7 @@ def reset_race():
     corner_initialized = False
     current_trajectory = None
     near_s = 0.0
+    corner_exit_line_seen = False
 
     _last_transition_time = 0.0
 
@@ -1175,6 +1215,7 @@ def reset_race():
 def main():
     global state
     global target_theta
+    global driving_direction
     global _previous_straight_steering
     global straight_ref_x
     global straight_ref_y
@@ -1258,6 +1299,10 @@ def main():
 
         target_theta = INITIAL_THETA
         _previous_straight_steering = 0.0
+
+        # corner_step() sets this when the target heading is reached.
+        # The forced EXIT_CORNER is processed on the next loop.
+        corner_exit_pending = False
 
         robot.update_pose(
             0.0,
@@ -1412,10 +1457,31 @@ def main():
                     f"blue={blue_seen}"
                 )
 
-            transition = add_section(
-                confirmed_orange,
-                confirmed_blue,
-            )
+            # -------------------------------------------------
+            # Process corner completion or current color reading
+            # -------------------------------------------------
+            if corner_exit_pending:
+
+                transition = add_section(
+                    orange_seen=False,
+                    blue_seen=False,
+                    force_corner_exit=True,
+                )
+
+                # If debounce rejected the forced exit, keep
+                # corner_exit_pending True and retry next loop.
+                if transition == "EXIT_CORNER":
+                    corner_exit_pending = False
+
+            else:
+                transition = add_section(
+                    confirmed_orange,
+                    confirmed_blue,
+                )
+
+                # This entry came from a real floor-line reading.
+                if transition == "ENTER_CORNER":
+                    corner_entered_by_backup = False
 
             # First-corner backup: the first color line was missed.
             if (
@@ -1519,6 +1585,7 @@ def main():
             # Handle section transitions
             # -------------------------------------
             if transition == "ENTER_CORNER":
+                corner_exit_pending = False
                 print("\n=== ENTERING CORNER ===")
                 print(
                     f"Direction: {driving_direction}"
@@ -1616,58 +1683,21 @@ def main():
                     motor_duty=CORNER_DUTY,
                 )
 
-                # A normally entered corner still requires the
-                # opposite floor line. Only backup-entered corners
-                # may use trajectory completion as their exit.
-                if (
-                    corner_entered_by_backup
-                    and corner_done
-                ):
-                    print(
-                        "\n[BACKUP] Corner trajectory completed. "
-                        "Forcing corner exit."
-                    )
+                # Every corner exits when its trajectory is complete,
+                # regardless of whether entry used color or backup distance.
+                if corner_done and not corner_exit_pending:
+                    corner_exit_pending = True
 
-                    if driving_direction == DrivingDirection.CW:
-                        # Blue normally exits a CW corner.
-                        automatic_exit = add_section(
-                            orange_seen=False,
-                            blue_seen=True,
+                    if corner_exit_line_seen:
+                        print(
+                            "\n[CORNER] Trajectory completed. "
+                            "The expected exit line was detected."
                         )
-
                     else:
-                        # Orange normally exits a CCW corner.
-                        automatic_exit = add_section(
-                            orange_seen=True,
-                            blue_seen=False,
-                        )
-
-                    if automatic_exit == "EXIT_CORNER":
                         print(
-                            "[BACKUP] Corner exited using "
-                            "trajectory completion."
+                            "\n[CORNER BACKUP] Trajectory completed "
+                            "without detecting the exit line."
                         )
-                        print(
-                            f"Laps completed: {laps}"
-                        )
-
-                        if laps >= 1:
-                            car.stop()
-                            state = State.FINISHED
-
-                            print(
-                                "\n=== FULL LAP COMPLETED ==="
-                            )
-                            break
-
-                        begin_new_straight(
-                            x=x,
-                            y=y,
-                        )
-
-                        # Run the straight controller on the
-                        # following control-loop iteration.
-                        continue
 
 
 
