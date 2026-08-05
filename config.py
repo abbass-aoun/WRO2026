@@ -33,10 +33,10 @@ ROBOT_LENGTH_CM = 30.0   # overall body length (cm)
 ROBOT_WIDTH_CM  = 12.0   # overall body width  (cm)
 
 
-STRAIGHT_STEERING_TRIM_DEG = 3.0 # Steering calibration
+STRAIGHT_STEERING_TRIM_DEG = 1.5 # Steering calibration
 
 SERVO_CENTER_DEG = 60.0 + STRAIGHT_STEERING_TRIM_DEG  # absolute servo angle that makes wheels straight
-SERVO_MAX_DEG = 18.0     # or your current chosen maximum
+SERVO_MAX_DEG = 20.0     # or your current chosen maximum
 
 
 PULSES_PER_REV = 20

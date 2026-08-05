@@ -58,9 +58,9 @@ INITIAL_THETA = 0.0  # radians (The robot starts facing along the global +X axis
 target_theta = 0.0 
 
 HEADING_DEADBAND_RAD = math.radians(1.0) # minimum error in heading direction for correction (reduces switches and movement in servo)
-STRAIGHT_KP = 0.25          # servo degrees per heading-error degree
+STRAIGHT_KP = 0.27          # servo degrees per heading-error degree
 STRAIGHT_CROSS_TRACK_KP = 0.20  # servo degrees per cm
-STRAIGHT_MAX_DEG = 12.0
+STRAIGHT_MAX_DEG = 18.0
 MAX_STEERING_CHANGE = 6.0   # maximum change per control update
 
 STRAIGHT_ALIGNMENT_TOLERANCE_RAD = math.radians(3.0)
@@ -76,8 +76,9 @@ _last_transition_time = 0.0 # last time where we transitioned between corner and
 
 # Minimum forward progress required before accepting the
 # next STRAIGHT -> CORNER line detection.
-MIN_STRAIGHT_PROGRESS_CM = 45.0
+MIN_STRAIGHT_PROGRESS_CM = 95.0
 FIRST_LINE_MIN_PROGRESS_CM = 10.0
+SECOND_CORNER_BACKUP_DISTANCE_CM = 140.0
 
 first_line_ref_x = None
 first_line_ref_y = None
@@ -1053,8 +1054,8 @@ def main():
     global first_line_ref_y
     global straight_reference_ready
 
-    STRAIGHT_DUTY = 0.50
-    CORNER_DUTY = 0.45
+    STRAIGHT_DUTY = 0.6
+    CORNER_DUTY = 0.55
     
 
     LOOP_PERIOD_S = 0.02
@@ -1117,6 +1118,9 @@ def main():
         first_line_ref_x = 0.0
         first_line_ref_y = 0.0
 
+        second_straight_start_x = None
+        second_straight_start_y = None
+
         target_theta = INITIAL_THETA
         _previous_straight_steering = 0.0
 
@@ -1135,6 +1139,8 @@ def main():
         previous_average_cm = 0.5 * (
             left_cm + right_cm
         )
+
+        
 
         previous_time = time.monotonic()
         previous_print_time = previous_time
@@ -1278,6 +1284,56 @@ def main():
                 confirmed_blue,
             )
 
+            # -------------------------------------------------
+            # Backup entry into the second corner
+            # -------------------------------------------------
+            # This measures forward displacement from the exit
+            # of corner 1, rather than total wheel path length.
+            if (
+                transition is None
+                and section_state == SectionState.STRAIGHT
+                and corners_completed == 1
+                and second_straight_start_x is not None
+                and second_straight_start_y is not None
+            ):
+                dx = x - second_straight_start_x
+                dy = y - second_straight_start_y
+
+                second_straight_progress_cm = (
+                    dx * math.cos(target_theta)
+                    + dy * math.sin(target_theta)
+                )
+
+                if (
+                    second_straight_progress_cm
+                    >= SECOND_CORNER_BACKUP_DISTANCE_CM
+                ):
+                    print(
+                        "\n[BACKUP] Second corner entry line missed. "
+                        f"Forward progress="
+                        f"{second_straight_progress_cm:.2f} cm"
+                    )
+
+                    if driving_direction == DrivingDirection.CW:
+                        # Orange normally enters a CW corner.
+                        transition = add_section(
+                            orange_seen=True,
+                            blue_seen=False,
+                        )
+
+                    elif driving_direction == DrivingDirection.CCW:
+                        # Blue normally enters a CCW corner.
+                        transition = add_section(
+                            orange_seen=False,
+                            blue_seen=True,
+                        )
+
+                    if transition == "ENTER_CORNER":
+                        print(
+                            "[BACKUP] Entering second corner "
+                            "after 140 cm."
+                        )
+
             # -------------------------------------
             # Handle section transitions
             # -------------------------------------
@@ -1311,12 +1367,31 @@ def main():
 
                     break
 
+                if corners_completed == 1:
+                    second_straight_ref_x = x
+                    second_straight_ref_y = y
+
+                    print(
+                        "[BACKUP] Second-straight reference set: "
+                        f"x={second_straight_ref_x:.2f}, "
+                        f"y={second_straight_ref_y:.2f}"
+                    )
+
                 # add_section() has already incremented
                 # corners_completed before returning.
                 target_theta = get_target_theta(
                     driving_direction,
                     corners_completed,
                 )
+
+                if corners_completed == 1:
+                    second_straight_start_x = x
+                    second_straight_start_y = y
+
+                    print(
+                        "[BACKUP] Second-straight start set: "
+                        f"x={x:.2f}, y={y:.2f}"
+                    )
 
                 straight_ref_x = None
                 straight_ref_y = None
