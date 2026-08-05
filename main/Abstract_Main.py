@@ -76,9 +76,20 @@ _last_transition_time = 0.0 # last time where we transitioned between corner and
 
 # Minimum forward progress required before accepting the
 # next STRAIGHT -> CORNER line detection.
-MIN_STRAIGHT_PROGRESS_CM = 95.0
-FIRST_LINE_MIN_PROGRESS_CM = 10.0
-SECOND_CORNER_BACKUP_DISTANCE_CM = 140.0
+MIN_STRAIGHT_PROGRESS_CM = 65.0
+FIRST_LINE_MIN_PROGRESS_CM = 15.0
+STRAIGHT_BACKUP_ENTRY_DISTANCE_CM = 135.0
+
+# A backup-entered corner may exit automatically when the
+# generated corner trajectory is nearly complete.
+CORNER_AUTO_EXIT_REMAINING_CM = 8.0
+CORNER_AUTO_EXIT_HEADING_TOLERANCE_RAD = math.radians(12.0)
+
+FIRST_CORNER_BACKUP_DISTANCE_CM = 65.0
+
+# Direction to assume when the first line is completely missed.
+FIRST_CORNER_BACKUP_DIRECTION = DrivingDirection.CW
+
 
 first_line_ref_x = None
 first_line_ref_y = None
@@ -87,6 +98,14 @@ first_line_ref_y = None
 straight_ref_x = None
 straight_ref_y = None
 
+# Reference used for floor-line distance validation and
+# the 140 cm backup. It is set immediately at corner exit.
+straight_progress_ref_x = None
+straight_progress_ref_y = None
+
+# True only when the current corner was entered because
+# the 140 cm backup activated.
+corner_entered_by_backup = False
 
 pillar_initialized = False
 pillar_trajectory = None
@@ -206,11 +225,17 @@ def confirm_floor_line(orange_seen, blue_seen, robot_x, robot_y):
     # so no minimum-distance condition is applied.
     if driving_direction == DrivingDirection.UNKNOWN:
 
-        if first_line_ref_x is None or first_line_ref_y is None:
+        # From here, the robot is in a straight section.
+        # Use the reference recorded immediately at corner exit,
+        # not the delayed steering reference.
+        if (
+            straight_progress_ref_x is None
+            or straight_progress_ref_y is None
+        ):
             return False, False
 
-        dx = robot_x - first_line_ref_x
-        dy = robot_y - first_line_ref_y
+        dx = robot_x - straight_progress_ref_x
+        dy = robot_y - straight_progress_ref_y
 
         first_line_progress_cm = (
             dx * math.cos(INITIAL_THETA)
@@ -378,6 +403,49 @@ def initialize_straight_reference(x, y):
     target_theta = get_target_theta(
         driving_direction,
         corners_completed
+    )
+
+
+def begin_new_straight(x, y):
+    """
+    Prepare navigation state after completing a corner.
+
+    The progress reference is stored immediately.
+    The steering reference remains unset until heading alignment.
+    """
+    global target_theta
+    global straight_ref_x
+    global straight_ref_y
+    global straight_progress_ref_x
+    global straight_progress_ref_y
+    global straight_reference_ready
+    global _previous_straight_steering
+    global corner_entered_by_backup
+
+    # add_section() has already updated corners_completed.
+    target_theta = get_target_theta(
+        driving_direction,
+        corners_completed,
+    )
+
+    # Used immediately for line validation and backup distance.
+    straight_progress_ref_x = x
+    straight_progress_ref_y = y
+
+    # Steering reference will be created later, after alignment.
+    straight_ref_x = None
+    straight_ref_y = None
+    straight_reference_ready = False
+
+    _previous_straight_steering = 0.0
+    corner_entered_by_backup = False
+
+    straight_pid.reset()
+
+    print(
+        "New straight started: "
+        f"x={x:.2f}, y={y:.2f}, "
+        f"target={math.degrees(target_theta):+.2f}°"
     )
 
 
@@ -988,12 +1056,59 @@ def corner_step(
     robot.update_steering(steering_deg)
 
     car.set_all(
-        direction='f',
+        direction="f",
         speed=motor_duty,
-        angle=steering_deg
+        angle=steering_deg,
     )
 
-    return steering_deg
+    # --------------------------------------------
+    # Corner trajectory completion
+    # --------------------------------------------
+    total_length = current_trajectory.total_length
+
+    remaining_cm = max(
+        0.0,
+        total_length - near_s,
+    )
+
+    progress_fraction = (
+        near_s / total_length
+        if total_length > 0.0
+        else 1.0
+    )
+
+    # Use the trajectory's own final tangent. This is better
+    # than assuming the robot entered the corner at an exact
+    # cardinal heading.
+    end_tx, end_ty = current_trajectory.get_tangent(
+        total_length
+    )
+
+    trajectory_end_theta = math.atan2(
+        end_ty,
+        end_tx,
+    )
+
+    end_heading_error = abs(
+        normalize_angle(
+            theta - trajectory_end_theta
+        )
+    )
+
+    corner_done = (
+        (
+            remaining_cm <= CORNER_AUTO_EXIT_REMAINING_CM
+            and end_heading_error
+            <= CORNER_AUTO_EXIT_HEADING_TOLERANCE_RAD
+        )
+        or
+        (
+            progress_fraction >= 0.75
+            and end_heading_error <= math.radians(5.0)
+        )
+    )
+
+    return steering_deg, corner_done
 
 
 def reset_race():
@@ -1013,6 +1128,11 @@ def reset_race():
     global straight_ref_y
     global first_line_ref_x
     global first_line_ref_y
+    global straight_progress_ref_x
+    global straight_progress_ref_y
+    global straight_reference_ready
+    global corner_entered_by_backup
+    global _previous_straight_steering
 
     driving_direction = DrivingDirection.UNKNOWN
 
@@ -1037,8 +1157,16 @@ def reset_race():
     straight_ref_x = None
     straight_ref_y = None
 
+    straight_progress_ref_x = None
+    straight_progress_ref_y = None
+
     first_line_ref_x = None
     first_line_ref_y = None
+
+    straight_reference_ready = False
+    corner_entered_by_backup = False
+    _previous_straight_steering = 0.0
+
 
     clear_pillar()
     straight_pid.reset()
@@ -1053,8 +1181,11 @@ def main():
     global first_line_ref_x
     global first_line_ref_y
     global straight_reference_ready
+    global straight_progress_ref_x
+    global straight_progress_ref_y
+    global corner_entered_by_backup
 
-    STRAIGHT_DUTY = 0.6
+    STRAIGHT_DUTY = 0.65
     CORNER_DUTY = 0.55
     
 
@@ -1073,12 +1204,13 @@ def main():
         ekf,
     ) = initialize_hardware()
 
-    print("\n=== STRAIGHT -> CORNER -> STRAIGHT TEST ===")
+    print("\n=== FULL LAP TEST ===")
     print("The robot will:")
-    print("1. Drive along the first straight.")
-    print("2. Detect the first colored line.")
-    print("3. Follow one corner.")
-    print("4. Detect the opposite-colored exit line.")
+    print("1. Detect direction from the first floor line.")
+    print("2. Complete four straight sections.")
+    print("3. Complete four 90-degree corners.")
+    print("4. Stop after one full lap.")
+    print("5. Use the 140 cm entry backup when needed.")
     
     print("Press Ctrl+C immediately if the robot behaves incorrectly.")
 
@@ -1118,8 +1250,11 @@ def main():
         first_line_ref_x = 0.0
         first_line_ref_y = 0.0
 
-        second_straight_start_x = None
-        second_straight_start_y = None
+        straight_progress_ref_x = 0.0
+        straight_progress_ref_y = 0.0
+
+        straight_reference_ready = True
+        corner_entered_by_backup = False
 
         target_theta = INITIAL_THETA
         _previous_straight_steering = 0.0
@@ -1139,8 +1274,6 @@ def main():
         previous_average_cm = 0.5 * (
             left_cm + right_cm
         )
-
-        
 
         previous_time = time.monotonic()
         previous_print_time = previous_time
@@ -1284,34 +1417,80 @@ def main():
                 confirmed_blue,
             )
 
-            # -------------------------------------------------
-            # Backup entry into the second corner
-            # -------------------------------------------------
-            # This measures forward displacement from the exit
-            # of corner 1, rather than total wheel path length.
+            # First-corner backup: the first color line was missed.
             if (
                 transition is None
                 and section_state == SectionState.STRAIGHT
-                and corners_completed == 1
-                and second_straight_start_x is not None
-                and second_straight_start_y is not None
+                and driving_direction == DrivingDirection.UNKNOWN
             ):
-                dx = x - second_straight_start_x
-                dy = y - second_straight_start_y
+                dx = x - first_line_ref_x
+                dy = y - first_line_ref_y
 
-                second_straight_progress_cm = (
+                first_straight_progress_cm = (
+                    dx * math.cos(INITIAL_THETA)
+                    + dy * math.sin(INITIAL_THETA)
+                )
+
+                if (
+                    first_straight_progress_cm
+                    >= FIRST_CORNER_BACKUP_DISTANCE_CM
+                ):
+                    print(
+                        "\n[BACKUP] First corner line missed. "
+                        f"Progress={first_straight_progress_cm:.2f} cm"
+                    )
+
+                    if (
+                        FIRST_CORNER_BACKUP_DIRECTION
+                        == DrivingDirection.CW
+                    ):
+                        # Orange sets CW and enters the corner.
+                        transition = add_section(
+                            orange_seen=True,
+                            blue_seen=False,
+                        )
+                    else:
+                        # Blue sets CCW and enters the corner.
+                        transition = add_section(
+                            orange_seen=False,
+                            blue_seen=True,
+                        )
+
+                    if transition == "ENTER_CORNER":
+                        corner_entered_by_backup = True
+
+            # A normal sensor transition always has priority.
+            if transition == "ENTER_CORNER":
+                corner_entered_by_backup = False
+
+            # -------------------------------------------------
+            # Backup entry into the next corner
+            # -------------------------------------------------
+            # This applies after the first corner. The first
+            # floor line is still required to determine direction.
+            if (
+                transition is None
+                and section_state == SectionState.STRAIGHT
+                and driving_direction != DrivingDirection.UNKNOWN
+                and straight_progress_ref_x is not None
+                and straight_progress_ref_y is not None
+            ):
+                dx = x - straight_progress_ref_x
+                dy = y - straight_progress_ref_y
+
+                straight_forward_progress_cm = (
                     dx * math.cos(target_theta)
                     + dy * math.sin(target_theta)
                 )
 
                 if (
-                    second_straight_progress_cm
-                    >= SECOND_CORNER_BACKUP_DISTANCE_CM
+                    straight_forward_progress_cm
+                    >= STRAIGHT_BACKUP_ENTRY_DISTANCE_CM
                 ):
                     print(
-                        "\n[BACKUP] Second corner entry line missed. "
+                        "\n[BACKUP] Corner entry line missed. "
                         f"Forward progress="
-                        f"{second_straight_progress_cm:.2f} cm"
+                        f"{straight_forward_progress_cm:.2f} cm"
                     )
 
                     if driving_direction == DrivingDirection.CW:
@@ -1329,19 +1508,24 @@ def main():
                         )
 
                     if transition == "ENTER_CORNER":
+                        corner_entered_by_backup = True
+
                         print(
-                            "[BACKUP] Entering second corner "
-                            "after 140 cm."
+                            "[BACKUP] Corner entered through "
+                            "distance backup."
                         )
 
             # -------------------------------------
             # Handle section transitions
             # -------------------------------------
             if transition == "ENTER_CORNER":
-
                 print("\n=== ENTERING CORNER ===")
                 print(
                     f"Direction: {driving_direction}"
+                )
+                print(
+                    f"Entry source: "
+                    f"{'BACKUP' if corner_entered_by_backup else 'COLOR SENSOR'}"
                 )
                 print(
                     f"Entry position: "
@@ -1354,60 +1538,13 @@ def main():
 
             elif transition == "EXIT_CORNER":
 
-                print(
-                    f"\n=== CORNER {corners_completed} EXITED ==="
-                )
-
-                # Stop after completing the second corner.
-                if corners_completed >= 2:
-                    car.stop()
-
-                    print("\n=== TWO-CORNER TEST COMPLETED ===")
-                    print("The robot exited the second corner.")
-
-                    break
-
-                if corners_completed == 1:
-                    second_straight_ref_x = x
-                    second_straight_ref_y = y
-
-                    print(
-                        "[BACKUP] Second-straight reference set: "
-                        f"x={second_straight_ref_x:.2f}, "
-                        f"y={second_straight_ref_y:.2f}"
-                    )
-
-                # add_section() has already incremented
-                # corners_completed before returning.
-                target_theta = get_target_theta(
-                    driving_direction,
-                    corners_completed,
-                )
-
-                if corners_completed == 1:
-                    second_straight_start_x = x
-                    second_straight_start_y = y
-
-                    print(
-                        "[BACKUP] Second-straight start set: "
-                        f"x={x:.2f}, y={y:.2f}"
-                    )
-
-                straight_ref_x = None
-                straight_ref_y = None
-                straight_reference_ready = False
-
-                _previous_straight_steering = 0.0
-
-                
-                straight_pid.reset()
-
-                
-
                 print("\n=== CORNER EXITED ===")
                 print(
-                    f"Corners completed: "
+                    f"Corners completed in current lap: "
                     f"{corners_completed}"
+                )
+                print(
+                    f"Laps completed: {laps}"
                 )
                 print(
                     f"Exit position: "
@@ -1417,26 +1554,122 @@ def main():
                     f"Current heading: "
                     f"{math.degrees(theta):+.2f}°"
                 )
+
+                # add_section() resets corners_completed to 0
+                # and increments laps after the fourth corner.
+                if laps >= 1:
+                    car.stop()
+                    state = State.FINISHED
+
+                    print("\n=== FULL LAP COMPLETED ===")
+                    break
+
+                # add_section() has already incremented
+                # corners_completed before returning.
+                target_theta = get_target_theta(
+                    driving_direction,
+                    corners_completed,
+                )
+
+                # Immediately store where the new straight begins.
+                # This reference is used for:
+                # 1. Floor-line distance validation.
+                # 2. The 140 cm backup corner entry.
+                straight_progress_ref_x = x
+                straight_progress_ref_y = y
+
+                # The direction-correction reference remains delayed
+                # until the robot aligns with target_theta.
+                straight_ref_x = None
+                straight_ref_y = None
+                straight_reference_ready = False
+
+                _previous_straight_steering = 0.0
+
+                # The previous corner is now fully finished.
+                corner_entered_by_backup = False
+
+                straight_pid.reset()
+
                 print(
                     f"New target heading: "
                     f"{math.degrees(target_theta):+.2f}°"
+                )
+                print(
+                    "[STRAIGHT] Progress reference set: "
+                    f"x={straight_progress_ref_x:.2f}, "
+                    f"y={straight_progress_ref_y:.2f}"
                 )
 
             # -------------------------------------
             # Select the active controller
             # -------------------------------------
             if section_state == SectionState.CORNER:
-                
-                
-                steering_deg = corner_step(
+
+                steering_deg, corner_done = corner_step(
                     car=car,
                     robot=robot,
                     x=x,
                     y=y,
                     theta=theta,
                     steering_pid=straight_pid,
-                    motor_duty=CORNER_DUTY
+                    motor_duty=CORNER_DUTY,
                 )
+
+                # A normally entered corner still requires the
+                # opposite floor line. Only backup-entered corners
+                # may use trajectory completion as their exit.
+                if (
+                    corner_entered_by_backup
+                    and corner_done
+                ):
+                    print(
+                        "\n[BACKUP] Corner trajectory completed. "
+                        "Forcing corner exit."
+                    )
+
+                    if driving_direction == DrivingDirection.CW:
+                        # Blue normally exits a CW corner.
+                        automatic_exit = add_section(
+                            orange_seen=False,
+                            blue_seen=True,
+                        )
+
+                    else:
+                        # Orange normally exits a CCW corner.
+                        automatic_exit = add_section(
+                            orange_seen=True,
+                            blue_seen=False,
+                        )
+
+                    if automatic_exit == "EXIT_CORNER":
+                        print(
+                            "[BACKUP] Corner exited using "
+                            "trajectory completion."
+                        )
+                        print(
+                            f"Laps completed: {laps}"
+                        )
+
+                        if laps >= 1:
+                            car.stop()
+                            state = State.FINISHED
+
+                            print(
+                                "\n=== FULL LAP COMPLETED ==="
+                            )
+                            break
+
+                        begin_new_straight(
+                            x=x,
+                            y=y,
+                        )
+
+                        # Run the straight controller on the
+                        # following control-loop iteration.
+                        continue
+
+
 
             else:
                 steering_deg = (
