@@ -36,8 +36,10 @@ TUNING (do this on the real robot):
 
 import threading
 from gpiozero import DigitalOutputDevice, DigitalInputDevice
-from time import sleep
+import time
+from time import sleep, monotonic
 
+ORANGE_HOLD_S = 0.12
 
 class ColorSensor:
     """
@@ -103,6 +105,9 @@ class ColorSensor:
         self.orange_seen: bool = False
         self.blue_seen:   bool = False
 
+        # Keep a brief orange detection visible to the main loop.
+        self._orange_until = 0.0
+
         self._stop_event = threading.Event()
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
@@ -144,17 +149,18 @@ class ColorSensor:
             # Orange: R strongly dominant over B and G.
             # Ratio-based so ambient light level doesn't matter.
             # TUNE ON REAL ROBOT if false positives occur.
-            self.orange_seen = (
-                4000 <= r <= 12000
-                and 2000 <= g <= 8000
-                and 1000 <= b <= 6000
+            orange_detected = (
+                3500 <= r <= 13000
+                and 1800 <= g <= 8000
+                and 1500 <= b <= 6000
+                and total <= 18000
                 and r > g * 1.35
-                and r > b * 1.70
+                and r > b * 1.60
             )
 
             # Blue: B strongly dominant over R and G.
             # TUNE ON REAL ROBOT if false positives occur.
-            self.blue_seen = (
+            blue_detected = (
                 800 <= r <= 4500
                 and 800 <= g <= 5000
                 and 1800 <= b <= 6500
@@ -162,6 +168,21 @@ class ColorSensor:
                 and b > r * 1.60
                 and b > g * 1.50
             )
+
+            now = monotonic()
+
+            # A current blue reading immediately cancels
+            # any previously held orange reading.
+            if blue_detected:
+                self._orange_until = 0.0
+                self.orange_seen = False
+            else:
+                if orange_detected:
+                    self._orange_until = now + ORANGE_HOLD_S
+
+                self.orange_seen = now <= self._orange_until
+
+            self.blue_seen = blue_detected
 
             sleep(self._poll_interval)
 

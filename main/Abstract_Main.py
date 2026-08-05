@@ -1,4 +1,5 @@
 import time
+import csv
 import math
 import numpy as np
 import cv2 as cv
@@ -58,8 +59,14 @@ target_theta = 0.0
 
 HEADING_DEADBAND_RAD = math.radians(1.0) # minimum error in heading direction for correction (reduces switches and movement in servo)
 STRAIGHT_KP = 0.25          # servo degrees per heading-error degree
+STRAIGHT_CROSS_TRACK_KP = 0.20  # servo degrees per cm
 STRAIGHT_MAX_DEG = 12.0
 MAX_STEERING_CHANGE = 6.0   # maximum change per control update
+
+STRAIGHT_ALIGNMENT_TOLERANCE_RAD = math.radians(3.0)
+STRAIGHT_CROSS_TRACK_MAX_DEG = 2.0
+
+straight_reference_ready = False
 
 _previous_straight_steering = 0.0
 
@@ -69,7 +76,7 @@ _last_transition_time = 0.0 # last time where we transitioned between corner and
 
 # Minimum forward progress required before accepting the
 # next STRAIGHT -> CORNER line detection.
-MIN_STRAIGHT_PROGRESS_CM = 100
+MIN_STRAIGHT_PROGRESS_CM = 45.0
 FIRST_LINE_MIN_PROGRESS_CM = 10.0
 
 first_line_ref_x = None
@@ -174,20 +181,6 @@ def read_sensors_and_update_ekf(encoders, color, ekf, robot, dt, gyro_bias):
 
     # 5. Color flags (background thread — instant read)
     return speed, v_l, v_r, omega, x, y, theta, color.orange_seen, color.blue_seen
-
-
-def initialize_first_line_reference(x, y):
-    """
-    Records the EKF position where the race begins.
-
-    The first orange or blue line will only be accepted after
-    the robot has moved FIRST_LINE_MIN_PROGRESS_CM forward.
-    """
-    global first_line_ref_x
-    global first_line_ref_y
-
-    first_line_ref_x = x
-    first_line_ref_y = y
 
 
 def confirm_floor_line(orange_seen, blue_seen, robot_x, robot_y):
@@ -423,31 +416,88 @@ def get_target_theta(direction, corners_done):
     return normalize_angle(target_theta)
 
 
-def calculate_straight_steering(theta):
+def calculate_straight_steering(x, y, theta):
     global _previous_straight_steering
+    global straight_ref_x
+    global straight_ref_y
+    global straight_reference_ready
 
     heading_error = normalize_angle(
         theta - target_theta
     )
 
-    heading_error_deg = math.degrees(heading_error)
-
-    if abs(heading_error) < HEADING_DEADBAND_RAD:
-        desired_steering = 0.0
-    else:
-        desired_steering = STRAIGHT_KP * heading_error_deg
-
-    # Limit straight-line corrections
-    desired_steering = max(
-        -STRAIGHT_MAX_DEG,
-        min(STRAIGHT_MAX_DEG, desired_steering)
+    heading_error_deg = math.degrees(
+        heading_error
     )
 
-    # Prevent sudden servo movements
+    if abs(heading_error) < HEADING_DEADBAND_RAD:
+        heading_correction = 0.0
+    else:
+        heading_correction = (
+            STRAIGHT_KP * heading_error_deg
+        )
+
+    # After a corner, first align with target_theta.
+    # Do not use cross-track correction yet.
+    if not straight_reference_ready:
+
+        cross_track_correction = 0.0
+
+        if (
+            abs(heading_error)
+            <= STRAIGHT_ALIGNMENT_TOLERANCE_RAD
+        ):
+            straight_ref_x = x
+            straight_ref_y = y
+            straight_reference_ready = True
+
+            print(
+                "Straight reference initialized: "
+                f"x={x:.2f}, y={y:.2f}"
+            )
+
+    else:
+        dx = x - straight_ref_x
+        dy = y - straight_ref_y
+
+        cross_track_error_cm = (
+            -dx * math.sin(target_theta)
+            + dy * math.cos(target_theta)
+        )
+
+        cross_track_correction = (
+            STRAIGHT_CROSS_TRACK_KP
+            * cross_track_error_cm
+        )
+
+        # Prevent lateral correction from forcing
+        # a large heading overshoot.
+        cross_track_correction = max(
+            -STRAIGHT_CROSS_TRACK_MAX_DEG,
+            min(
+                STRAIGHT_CROSS_TRACK_MAX_DEG,
+                cross_track_correction,
+            ),
+        )
+
+    desired_steering = (
+        heading_correction
+        + cross_track_correction
+    )
+
+    desired_steering = max(
+        -STRAIGHT_MAX_DEG,
+        min(
+            STRAIGHT_MAX_DEG,
+            desired_steering,
+        ),
+    )
+
     minimum = (
         _previous_straight_steering
         - MAX_STEERING_CHANGE
     )
+
     maximum = (
         _previous_straight_steering
         + MAX_STEERING_CHANGE
@@ -455,7 +505,10 @@ def calculate_straight_steering(theta):
 
     steering_deg = max(
         minimum,
-        min(maximum, desired_steering)
+        min(
+            maximum,
+            desired_steering,
+        ),
     )
 
     _previous_straight_steering = steering_deg
@@ -994,8 +1047,13 @@ def main():
     global state
     global target_theta
     global _previous_straight_steering
+    global straight_ref_x
+    global straight_ref_y
+    global first_line_ref_x
+    global first_line_ref_y
+    global straight_reference_ready
 
-    STRAIGHT_DUTY = 0.55
+    STRAIGHT_DUTY = 0.50
     CORNER_DUTY = 0.45
     
 
@@ -1053,10 +1111,11 @@ def main():
             theta0=0.0,
         )
 
-        initialize_first_line_reference(
-            x=0.0,
-            y=0.0,
-        )
+        straight_ref_x = 0.0
+        straight_ref_y = 0.0
+
+        first_line_ref_x = 0.0
+        first_line_ref_y = 0.0
 
         target_theta = INITIAL_THETA
         _previous_straight_steering = 0.0
@@ -1080,6 +1139,25 @@ def main():
         previous_time = time.monotonic()
         previous_print_time = previous_time
 
+        color_log_file = open(
+            "color_readings.csv",
+            "w",
+            newline="",
+        )
+
+        color_log = csv.writer(color_log_file)
+
+        color_log.writerow([
+            "time",
+            "x",
+            "y",
+            "section",
+            "r",
+            "g",
+            "b",
+            "orange",
+            "blue",
+        ])
         
         print("\nStarting movement...\n")
 
@@ -1173,6 +1251,28 @@ def main():
                 )
             )
 
+            r, g, b = color.rgb
+
+            color_log.writerow([
+                time.monotonic(),
+                x,
+                y,
+                section_state.name,
+                r,
+                g,
+                b,
+                orange_seen,
+                blue_seen,
+            ])
+
+            if orange_seen or blue_seen:
+                print(
+                    f"RAW COLOR | "
+                    f"RGB={color.rgb} | "
+                    f"orange={orange_seen} | "
+                    f"blue={blue_seen}"
+                )
+
             transition = add_section(
                 confirmed_orange,
                 confirmed_blue,
@@ -1213,12 +1313,18 @@ def main():
 
                 # add_section() has already incremented
                 # corners_completed before returning.
-                initialize_straight_reference(
-                    x,
-                    y,
+                target_theta = get_target_theta(
+                    driving_direction,
+                    corners_completed,
                 )
 
+                straight_ref_x = None
+                straight_ref_y = None
+                straight_reference_ready = False
+
                 _previous_straight_steering = 0.0
+
+                
                 straight_pid.reset()
 
                 
@@ -1260,7 +1366,7 @@ def main():
             else:
                 steering_deg = (
                     calculate_straight_steering(
-                        theta
+                        x, y, theta
                     )
                 )
 
@@ -1371,7 +1477,7 @@ def main():
             led.off()
 
         state = State.FINISHED
-
+        color_log_file.close()
         print("Hardware stopped safely.")
 
     
