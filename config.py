@@ -98,9 +98,27 @@ PILLAR_CLEARANCE_CM = 20.0   # lateral offset from pillar centre
 PILLAR_BODY_CM      =  5.0   # pillar side length (WRO 2026 spec: 50×50 mm)
 PILLAR_TRIGGER_CM = 90.0
 PILLAR_RECONNECT_CM = 80.0
-PILLAR_DONE_CM = 15.0
-PILLAR_DUTY = 0.30
+
+PILLAR_DONE_CM = 15.0 # The robot must reach almost the end of the avoidance trajectory.
+
+# The pillar must be this far behind the robot before
+# avoidance may hand control back to straight steering.
+PILLAR_CLEAR_MARGIN_CM = 25.0
+
+# Do not hand off while the robot is still pointing at
+# a dangerously large angle away from the straight.
+PILLAR_HANDOFF_MAX_HEADING_RAD = math.radians(20.0)
+
+PILLAR_HANDOFF_CONFIRMATIONS = 3 # Require a valid handoff for several control-loop iterations.
+
+PILLAR_DUTY = 0.45
 PILLAR_APPROACH_CM = 30.0
+# When another pillar is waiting, switch to its trajectory
+# once this much of the current trajectory remains.
+PILLAR_SWITCH_TO_NEXT_CM = 20.0
+
+
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Parking Lot                             (TUNE LOT_DEPTH if robot changes)

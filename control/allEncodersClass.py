@@ -39,7 +39,7 @@ NOTE ON ABSOLUTE HEADING:
 
 import math
 from gpiozero import Button
-from time import time
+from time import monotonic, time
 
 try:
     from mpu6050 import mpu6050 as MPU6050Lib
@@ -81,6 +81,11 @@ class RobotEncoders:
         self._right_last_pulse_t  = time()
         self._left_total_dist_cm  = 0.0
         self._right_total_dist_cm = 0.0
+
+        # Previous distance sample used for distance-over-time speed.
+        self._sample_left_dist_cm = 0.0
+        self._sample_right_dist_cm = 0.0
+        self._sample_time = monotonic()
 
         self._left_sensor  = Button(wheel_left_pin,  pull_up=True, bounce_time=0.003)
         self._right_sensor = Button(wheel_right_pin, pull_up=True, bounce_time=0.003)
@@ -143,12 +148,72 @@ class RobotEncoders:
         """Return (left_dist_cm, right_dist_cm) total distances driven."""
         return self._left_total_dist_cm, self._right_total_dist_cm
 
+
+    def get_distance_based_speeds(
+        self,
+    ) -> tuple[float, float, float]:
+        """
+        Calculate wheel speeds from distance covered since the
+        previous sample.
+
+        Returns:
+            v_left_cm_s
+            v_right_cm_s
+            actual_dt_s
+
+        Each encoder pulse contributes its distance exactly once.
+        """
+
+        now = monotonic()
+
+        left_dist_cm, right_dist_cm = self.get_distances()
+
+        dt = now - self._sample_time
+
+        # Protect against an extremely small or invalid time interval.
+        dt = max(dt, 1e-6)
+
+        delta_left_cm = (
+            left_dist_cm
+            - self._sample_left_dist_cm
+        )
+
+        delta_right_cm = (
+            right_dist_cm
+            - self._sample_right_dist_cm
+        )
+
+        # The current encoders are single-channel and therefore
+        # measure travelled magnitude, not forward/reverse direction.
+        delta_left_cm = max(0.0, delta_left_cm)
+        delta_right_cm = max(0.0, delta_right_cm)
+
+        v_left_cm_s = delta_left_cm / dt
+        v_right_cm_s = delta_right_cm / dt
+
+        # Save the current sample for the next call.
+        self._sample_left_dist_cm = left_dist_cm
+        self._sample_right_dist_cm = right_dist_cm
+        self._sample_time = now
+
+        return (
+            v_left_cm_s,
+            v_right_cm_s,
+            dt,
+        )
+
+
     def reset(self) -> None:
         """Reset pulse counts and distance totals (call at start of each run)."""
         self._left_count          = 0
         self._right_count         = 0
         self._left_total_dist_cm  = 0.0
         self._right_total_dist_cm = 0.0
+
+        self._sample_left_dist_cm = 0.0
+        self._sample_right_dist_cm = 0.0
+        self._sample_time = monotonic()
+
         _far_past = time() - 999.0
         self._left_last_pulse_t   = _far_past
         self._right_last_pulse_t  = _far_past

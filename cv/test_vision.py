@@ -1,8 +1,8 @@
 import cv2 as cv
 
-from camera import open_camera, read_frame, release_camera
-from config import WINDOW_NAME, RED_MASK_WINDOW, GREEN_MASK_WINDOW, PINK_MASK_WINDOW, BLACK_WALL_MASK_WINDOW
-from vision import (
+from cv.camera import open_camera, read_frame, release_camera
+from cv.config import WINDOW_NAME, RED_MASK_WINDOW, GREEN_MASK_WINDOW, PINK_MASK_WINDOW, BLACK_WALL_MASK_WINDOW
+from cv.vision import (
     convert_to_hsv,
     create_red_mask, 
     create_green_mask,
@@ -11,7 +11,7 @@ from vision import (
     draw_parking_markers,
     detect_pillars,
     detect_parking_markers,
-    create_navigation_output,
+    
     create_parking_output,
     create_black_wall_mask,
     detect_wall_slices,
@@ -52,7 +52,7 @@ def main():
 
         
         # 3. Information outputs
-        navigation_output = create_navigation_output(all_detections)
+        
         parking_output = create_parking_output(parking_markers)
         wall_output = create_wall_output(wall_slices)
 
